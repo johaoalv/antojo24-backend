@@ -1,0 +1,17 @@
+# Ignorar entorno virtual
+venv/
+
+# Ignorar archivos de configuración y credenciales
+.env
+.env.local
+*.pyc
+__pycache__/
+
+# Ignorar logs y caché
+*.log
+logs/
+cache/
+
+# Ignorar dependencias si se instalan localmente
+pip-wheel-metadata/
+pip-log.txt
