@@ -8,21 +8,38 @@ from flask_cors import CORS
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app, resources={r"/api/*": {"origins": "*"}})
 
+# Configurar CORS: Permite todos los orígenes en local, y en producción Netlify
+CORS(app, resources={r"/api/*": {"origins": os.getenv("FRONTEND_URL", "*")}})
 
 @app.route("/api/pedido", methods=["POST"])
 def pedido():
-     data = request.json
-     print("Datos recibidos en el backend:", data)
-     url_webhook_pedido = os.environ["N8N_WEBHOOK_URL"]  # URL del webhook de n8n
-     headers = {
-        "Content-Type": "application/json",
-        "Authorization": os.environ["N8N_API_KEY"] 
-    }
-    
-     response = requests.post(url_webhook_pedido, headers=headers, json=request.get_json())
-     return response.text, response.status_code  # Devuelve la respuesta de n8n
+    data = request.json
+    print("Datos recibidos en el backend:", data)
 
+    # Obtener variables de entorno de forma segura
+    url_webhook_pedido = os.getenv("N8N_WEBHOOK_URL")
+    api_key = os.getenv("N8N_API_KEY")
+
+    # Verificar que las variables están definidas
+    if not url_webhook_pedido or not api_key:
+        return jsonify({"error": "Faltan variables de entorno en el servidor"}), 500
+
+    # Configurar headers
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": api_key
+    }
+
+    # Enviar datos a n8n
+    response = requests.post(url_webhook_pedido, headers=headers, json=data)
+    return response.text, response.status_code  # Devuelve la respuesta de n8n
+
+# Manejo de preflight request para CORS en Netlify
+@app.route("/api/pedido", methods=["OPTIONS"])
+def handle_options():
+    return '', 200
+
+# Configurar el puerto correctamente en local y Railway
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)  # Ejecutar en el puerto 5000
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
