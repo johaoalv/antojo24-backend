@@ -12,29 +12,33 @@ app = Flask(__name__)
 # Configurar CORS: Permite todos los orígenes en local, y en producción Netlify
 CORS(app, resources={r"/api/*": {"origins": os.getenv("FRONTEND_URL", "*")}})
 
+# Variables de entorno para Supabase
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+
+# Endpoint para insertar en la tabla productos_pedido
 @app.route("/api/pedido", methods=["POST"])
 def pedido():
     data = request.json
-    print("Datos recibidos en el backend:", data)
-
-    # Obtener variables de entorno de forma segura
-    url_webhook_pedido = os.getenv("N8N_WEBHOOK_URL")
-    api_key = os.getenv("N8N_API_KEY")
-
-    # Verificar que las variables están definidas
-    if not url_webhook_pedido or not api_key:
-        return jsonify({"error": "Faltan variables de entorno en el servidor"}), 500
-
-    # Configurar headers
+    supabase_endpoint = f"{SUPABASE_URL}/rest/v1/productos_pedido"
     headers = {
         "Content-Type": "application/json",
-        "Authorization": api_key
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}"
     }
-
-    # Enviar datos a n8n
-    response = requests.post(url_webhook_pedido, headers=headers, json=data)
-    return response.text, response.status_code  # Devuelve la respuesta de n8n
-
+    productos = [
+        {
+            "pedido_id": item["pedido_id"],
+            "producto": item["producto"],
+            "cantidad": item["cantidad"],
+            "total_item": item["total_item"],
+            "total_pedido": item["total_pedido"],
+            "metodo_pago": item["metodo_pago"]
+        }
+        for item in data.get("productos_pedido", [])
+    ]
+    response = requests.post(supabase_endpoint, headers=headers, json=productos)
+    return jsonify({"message": "Pedido insertado correctamente en Supabase"}) if response.status_code in [200, 201] else jsonify({"error": "Error al insertar en Supabase", "details": response.text}), response.status_code
 # Manejo de preflight request para CORS en Netlify
 @app.route("/api/pedido", methods=["OPTIONS"])
 def handle_options():
