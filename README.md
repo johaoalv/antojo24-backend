@@ -25,6 +25,8 @@ Antes de comenzar, asegúrate de tener instalados los siguientes componentes:
    python -m venv env
    source env/bin/activate  # En macOS/Linux
    env\Scripts\activate  # En Windows
+   venv\Scripts\Activate
+
    ```
 
 3. **Instalar las dependencias:**
