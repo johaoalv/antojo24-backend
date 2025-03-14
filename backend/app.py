@@ -56,22 +56,55 @@ def get_dashboard():
     fecha_ayer = str(date.today() - timedelta(days=1))  # Fecha de ayer
 
     # 🔹 Obtener TODOS los pedidos de Supabase
-    response = supabase.table("pedidos") \
-        .select("total_pedido, fecha") \
+    response_pedidos = supabase.table("pedidos") \
+        .select("total_pedido, fecha, metodo_pago") \
         .execute()
 
-    if not response.data:
-        return jsonify({"error": "Error al obtener datos de pedidos", "details": response}), 500
+    response_productos = supabase.table("productos_pedido") \
+        .select("producto, cantidad") \
+        .execute()
 
-    pedidos = response.data
+    if not response_pedidos.data or not response_productos.data:
+        return jsonify({"error": "Error al obtener datos del dashboard"}), 500
 
-    # 🔹 Filtrar y calcular los totales en Python
+    pedidos = response_pedidos.data
+    productos = response_productos.data
+
+    # 🔹 1 & 2: Calcular ventas de hoy y ayer
     ventas_hoy = sum(p["total_pedido"] for p in pedidos if p["fecha"] == fecha_hoy)
     ventas_ayer = sum(p["total_pedido"] for p in pedidos if p["fecha"] == fecha_ayer)
 
+    # 🔹 3: Producto más vendido
+    productos_vendidos = {}
+    for p in productos:
+        if p["producto"] in productos_vendidos:
+            productos_vendidos[p["producto"]] += p["cantidad"]
+        else:
+            productos_vendidos[p["producto"]] = p["cantidad"]
+
+    producto_mas_vendido = max(productos_vendidos, key=productos_vendidos.get) if productos_vendidos else "N/A"
+
+    # 🔹 4: Método de pago más usado
+    metodos_pago = {}
+    for p in pedidos:
+        if p["metodo_pago"] in metodos_pago:
+            metodos_pago[p["metodo_pago"]] += 1
+        else:
+            metodos_pago[p["metodo_pago"]] = 1
+
+    metodo_pago_mas_usado = max(metodos_pago, key=metodos_pago.get) if metodos_pago else "N/A"
+
+    # 🔹 5: % de variación en ventas
+    variacion_porcentaje = (
+        ((ventas_hoy - ventas_ayer) / ventas_ayer * 100) if ventas_ayer > 0 else 100
+    )
+
     return jsonify({
         "ventas_hoy": ventas_hoy,
-        "ventas_ayer": ventas_ayer
+        "ventas_ayer": ventas_ayer,
+        "producto_mas_vendido": producto_mas_vendido,
+        "metodo_pago_mas_usado": metodo_pago_mas_usado,
+        "variacion_porcentaje": round(variacion_porcentaje, 2)
     }), 200
 
 
