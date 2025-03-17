@@ -4,6 +4,7 @@ import os
 from dotenv import load_dotenv
 from flask_cors import CORS
 from supabase import create_client, Client
+import bcrypt
 
 # Cargar variables de entorno
 load_dotenv()
@@ -18,7 +19,71 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 # Crear el cliente de Supabase
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
-print(app.url_map)
+
+@app.route("/api/register", methods=["POST"])
+def register():
+    data = request.json
+    nombre = data.get("nombre")
+    apellido = data.get("apellido")
+    cedula = data.get("cedula")
+    pin = data.get("pin")  # Recibimos el PIN sin encriptar
+    tienda = data.get("tienda")
+    telefono = data.get("telefono")
+    correo = data.get("correo")
+
+    if not all([nombre, apellido, cedula, pin, tienda, telefono, correo]):
+        return jsonify({"error": "Todos los campos son obligatorios."}), 400
+
+    if len(pin) != 6 or not pin.isdigit():
+        return jsonify({"error": "El PIN debe ser un número de 6 dígitos."}), 400
+
+    # 🔹 Encriptamos el PIN antes de guardarlo
+    hashed_pin = bcrypt.hashpw(pin.encode(), bcrypt.gensalt()).decode()
+
+    response = supabase.table("empleados").insert({
+        "nombre": nombre,
+        "apellido": apellido,
+        "cedula": cedula,
+        "pin": hashed_pin,
+        "tienda": tienda,
+        "telefono": telefono,
+        "correo": correo
+    }).execute()
+
+    if response.data:
+        return jsonify({"message": "Empleado registrado correctamente"}), 201
+    else:
+        return jsonify({"error": "Error al registrar empleado"}), 500
+
+
+#Funcion para verificar PIN
+def verify_pin(pin, hashed_pin):
+    return bcrypt.checkpw(pin.encode(), hashed_pin.encode())
+
+#Endpoint para validar PIN en Supabase
+@app.route("/api/login", methods=["POST"])
+def login ():
+    data = request.json
+    pin = data.get("pin")
+
+    if  not pin:
+        return jsonify({"error": "Cédula y PIN son requeridos."}), 400
+    
+    # Buscar al empleado en la base de datos por su cédula
+    response = supabase.table("empleados").select("nombre, apellido, pin").execute()
+    
+    # Si no se encuentra el empleado, se devuelve un error
+    if not response.data:
+        return jsonify({"error": "Empleado no encontrado."}), 404
+    
+    empleado = response.data[0]  # Se obtiene la información del empleado
+    
+    # Verificar si el PIN ingresado es correcto
+    if verify_pin(pin, empleado["pin"]):
+        return jsonify({"message": "Inicio de sesión exitoso", "nombre": empleado["nombre"], "apellido": empleado["apellido"]}), 200
+    else:
+        return jsonify({"error": "PIN incorrecto."}), 401
+
 
 # Endpoint para insertar en la tabla productos_pedido
 @app.route("/api/pedido", methods=["POST"])
