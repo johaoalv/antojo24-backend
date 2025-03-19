@@ -22,38 +22,51 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
 @app.route("/api/register", methods=["POST"])
 def register():
-    data = request.json
-    nombre = data.get("nombre")
-    apellido = data.get("apellido")
-    cedula = data.get("cedula")
-    pin = data.get("pin")  # Recibimos el PIN sin encriptar
-    tienda = data.get("tienda")
-    telefono = data.get("telefono")
-    correo = data.get("correo")
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "Datos JSON inválidos"}), 400
 
-    if not all([nombre, apellido, cedula, pin, tienda, telefono, correo]):
-        return jsonify({"error": "Todos los campos son obligatorios."}), 400
+        required_fields = ["nombre", "apellido", "cedula", "pin", "tienda", "telefono", "correo"]
+        missing_fields = [field for field in required_fields if field not in data]
 
-    if len(pin) != 6 or not pin.isdigit():
-        return jsonify({"error": "El PIN debe ser un número de 6 dígitos."}), 400
+        if missing_fields:
+            return jsonify({"error": f"Faltan los siguientes campos: {', '.join(missing_fields)}"}), 400
 
-    # 🔹 Encriptamos el PIN antes de guardarlo
-    hashed_pin = bcrypt.hashpw(pin.encode(), bcrypt.gensalt()).decode()
+        nombre = data["nombre"].strip()
+        apellido = data["apellido"].strip()
+        cedula = data["cedula"].strip()
+        pin = data["pin"].strip()
+        tienda = data["tienda"].strip()
+        telefono = data["telefono"].strip()
+        correo = data["correo"].strip()
 
-    response = supabase.table("empleados").insert({
-        "nombre": nombre,
-        "apellido": apellido,
-        "cedula": cedula,
-        "pin": hashed_pin,
-        "tienda": tienda,
-        "telefono": telefono,
-        "correo": correo
-    }).execute()
+        # Validaciones específicas
+        if len(pin) != 6 or not pin.isdigit():
+            return jsonify({"error": "El PIN debe ser un número de 6 dígitos."}), 400
 
-    if response.data:
-        return jsonify({"message": "Empleado registrado correctamente"}), 201
-    else:
-        return jsonify({"error": "Error al registrar empleado"}), 500
+        # 🔹 Encriptamos el PIN antes de guardarlo
+        hashed_pin = bcrypt.hashpw(pin.encode(), bcrypt.gensalt()).decode()
+        print(f"Hashed PIN generado: {hashed_pin}") 
+
+        # 🔹 Insertamos en Supabase
+        response = supabase.table("empleados").insert({
+            "nombre": nombre,
+            "apellido": apellido,
+            "cedula": cedula,
+            "pin": hashed_pin,
+            "tienda": tienda,
+            "telefono": telefono,
+            "correo": correo
+        }).execute()
+
+        if response.data:
+            return jsonify({"message": "Empleado registrado correctamente"}), 201
+        else:
+            return jsonify({"error": "Error al registrar empleado"}), 500
+
+    except Exception as e:
+        return jsonify({"error": f"Error interno del servidor: {str(e)}"}), 500
 
 
 #Funcion para verificar PIN
@@ -64,23 +77,31 @@ def verify_pin(pin, hashed_pin):
 @app.route("/api/login", methods=["POST"])
 def login ():
     data = request.json
+    cedula = data.get("cedula")
     pin = data.get("pin")
 
-    if  not pin:
+    if  not cedula or not pin:
         return jsonify({"error": "Cédula y PIN son requeridos."}), 400
     
     # Buscar al empleado en la base de datos por su cédula
-    response = supabase.table("empleados").select("nombre, apellido, pin").execute()
+    response = supabase.table("empleados").select("nombre, apellido, pin").eq("cedula", cedula).execute()
     
     # Si no se encuentra el empleado, se devuelve un error
     if not response.data:
         return jsonify({"error": "Empleado no encontrado."}), 404
     
     empleado = response.data[0]  # Se obtiene la información del empleado
+    print(f"PIN ingresado: {pin}")
+    print(f"PIN en la BD: {empleado['pin']}")
+
     
     # Verificar si el PIN ingresado es correcto
     if verify_pin(pin, empleado["pin"]):
-        return jsonify({"message": "Inicio de sesión exitoso", "nombre": empleado["nombre"], "apellido": empleado["apellido"]}), 200
+        return jsonify({
+                "message": "Inicio de sesión exitoso", 
+                "nombre": empleado["nombre"], 
+                "apellido": empleado["apellido"]
+                }), 200
     else:
         return jsonify({"error": "PIN incorrecto."}), 401
 
