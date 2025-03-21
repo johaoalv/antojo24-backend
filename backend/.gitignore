@@ -1,5 +1,7 @@
 # Ignorar entorno virtual
 venv/
+env/
+
 
 # Ignorar archivos de configuración y credenciales
 .env
