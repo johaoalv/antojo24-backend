@@ -1,6 +1,5 @@
 from flask import Blueprint, request, jsonify # type: ignore
 from supabase import create_client # type: ignore
-import bcrypt # type: ignore
 import os
 
 auth_bp = Blueprint("auth", __name__)
@@ -9,8 +8,6 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
-def verify_pin(pin, hashed_pin):
-    return bcrypt.checkpw(pin.encode(), hashed_pin.encode())
 
 @auth_bp.route("/api/login", methods=["POST"])
 def login():
@@ -18,19 +15,18 @@ def login():
     pin = data.get("pin")
 
     if not pin:
-        return jsonify({"error": "Cédula y PIN son requeridos."}), 400
+        return jsonify({"error": " PIN son requeridos."}), 400
 
-    response = supabase.table("empleados").select("nombre, apellido, pin").execute()
+    response = supabase.table("tiendas_acceso").select("id, nombre_tienda, sucursal_id, pin_acceso").eq("pin_acceso", pin).execute()
+
 
     if not response.data:
-        return jsonify({"error": "Empleado no encontrado."}), 404
+        return jsonify({"error": "Pin incorrecto o tienda no encontrada."}), 404
 
-    empleado = response.data[0]
-    if verify_pin(pin, empleado["pin"]):
-        return jsonify({
+    tienda = response.data[0]
+    return jsonify({
             "message": "Inicio de sesión exitoso",
-            "nombre": empleado["nombre"],
-            "apellido": empleado["apellido"]
+            "nombre_tienda": tienda["nombre_tienda"],
+            "sucursal_id": tienda["sucursal_id"]
         }), 200
-    else:
-        return jsonify({"error": "PIN incorrecto."}), 401
+ 
