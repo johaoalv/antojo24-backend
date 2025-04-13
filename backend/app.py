@@ -9,7 +9,7 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {
     "origins": [
-        os.getenv("FRONTEND_URL")
+        os.getenv("NETLIFY_URL")
     ],
     "supports_credentials": True
 }})
@@ -36,7 +36,7 @@ app.register_blueprint(print_bp)
 
 @app.after_request
 def aplicar_cors_headers(response):
-    response.headers["Access-Control-Allow-Origin"] = os.getenv("FRONTEND_URL")
+    response.headers["Access-Control-Allow-Origin"] = os.getenv("NETLIFY_URL")
     response.headers["Access-Control-Allow-Headers"] = "Content-Type,Authorization"
     response.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
     return response
