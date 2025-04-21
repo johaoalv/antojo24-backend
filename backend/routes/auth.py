@@ -17,7 +17,7 @@ def login():
     if not pin:
         return jsonify({"error": " PIN son requeridos."}), 400
 
-    response = supabase.table("tiendas_acceso").select("id, nombre_tienda, sucursal_id, pin_acceso").eq("pin_acceso", pin).execute()
+    response = supabase.table("tiendas_acceso").select("id, nombre_tienda, sucursal_id, pin_acceso, rol").eq("pin_acceso", pin).execute()
 
 
     if not response.data:
@@ -27,6 +27,7 @@ def login():
     return jsonify({
             "message": "Inicio de sesión exitoso",
             "nombre_tienda": tienda["nombre_tienda"],
-            "sucursal_id": tienda["sucursal_id"]
+            "sucursal_id": tienda["sucursal_id"],
+            "rol": tienda["rol"]
         }), 200
  
