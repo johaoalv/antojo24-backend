@@ -19,6 +19,7 @@ def pedido():
             "total_item": item["total_item"],
             "total_pedido": data["total_pedido"],
             "metodo_pago": data["metodo_pago"],
+            "sucursal_id": data["sucursal_id"]
         }
         for item in data["pedido"]
     ]
