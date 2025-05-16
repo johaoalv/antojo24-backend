@@ -10,8 +10,7 @@ SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
 def get_panama_datetime():
-   
-    return datetime.utcnow() - timedelta(hours=5)
+    return datetime.utcnow() - timedelta(hours=5)  # 👈 "utcnow" correcto
 
 def get_rango_fecha_panama():
     now = get_panama_datetime()
@@ -19,6 +18,37 @@ def get_rango_fecha_panama():
     inicio = f"{fecha_str}T00:00:00"
     fin = f"{fecha_str}T23:59:59"
     return inicio, fin, fecha_str
+
+# --- Nuevo endpoint para pedidos del día ---
+@cierre_bp.route("/api/pedidos-hoy", methods=["GET"])
+def get_pedidos_hoy():
+    sucursal_id = request.args.get("sucursal_id")
+    print(f"[DEBUG] sucursal_id recibido: {sucursal_id}")  # 👈 Nuevo
+    
+    if not sucursal_id:
+        return jsonify({"error": "sucursal_id es requerido"}), 400
+
+    inicio, fin, _ = get_rango_fecha_panama()
+    print(f"[DEBUG] Rango de fechas: {inicio} a {fin}")  # 👈 Nuevo
+
+    try:
+        response = supabase.table("productos_pedido") \
+            .select("*") \
+            .eq("sucursal_id", sucursal_id) \
+            .gte("fecha", inicio) \
+            .lte("fecha", fin) \
+            .execute()
+        
+        print(f"[DEBUG] Respuesta de Supabase: {response}")  # 👈 Nuevo
+        
+        if not response.data:
+            return jsonify({"error": "No hay pedidos hoy"}), 404
+
+        return jsonify(response.data), 200
+        
+    except Exception as e:
+        print(f"[ERROR] Excepción: {str(e)}")  # 👈 Nuevo
+        return jsonify({"error": "Error interno"}), 500
 
 @cierre_bp.route("/api/cierre-caja", methods=["POST"])
 def cierre_caja():
@@ -100,3 +130,5 @@ def cierre_caja():
     }]).execute()
 
     return jsonify({"message": "Cierre realizado con éxito", "resumen": resultado.data[0]})
+
+  

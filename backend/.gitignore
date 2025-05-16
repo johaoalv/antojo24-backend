@@ -17,3 +17,4 @@ cache/
 # Ignorar dependencias si se instalan localmente
 pip-wheel-metadata/
 pip-log.txt
+.DS_Store
