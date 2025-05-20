@@ -10,6 +10,9 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
+print("🚀 cierre.py se está cargando")
+
+
 def get_panama_datetime():
     return datetime.utcnow() - timedelta(hours=5)  # 👈 "utcnow" correcto
 
@@ -131,5 +134,11 @@ def cierre_caja():
     }]).execute()
 
     return jsonify({"message": "Cierre realizado con éxito", "resumen": resultado.data[0]})
+
+@cierre_bp.route("/api/test-cierre", methods=["GET"])
+def test_cierre():
+    print("✅ Endpoint test-cierre activo")
+    return jsonify({"message": "cierre_bp está cargado correctamente"}), 200
+
 
   
