@@ -1,3 +1,4 @@
+#archivo cierre.py
 from flask import Blueprint, request, jsonify
 from datetime import datetime, timedelta
 from supabase import create_client

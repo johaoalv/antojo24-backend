@@ -1,5 +1,5 @@
-from flask import Blueprint, request, jsonify # type: ignore
-from supabase import create_client # type: ignore
+from flask import Blueprint, request, jsonify 
+from supabase import create_client 
 import os
 
 pedido_bp = Blueprint("pedido", __name__)
