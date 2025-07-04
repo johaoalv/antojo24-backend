@@ -29,7 +29,6 @@ app.register_blueprint(dashboard_bp)
 app.register_blueprint(print_bp)
 app.register_blueprint(cierre_bp)
 
-
 # @app.before_request
 # def validar_origen():
 #     origen_valido = "https://rapid-food-pma.netlify.app/"
