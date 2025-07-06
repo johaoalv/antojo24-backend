@@ -1,6 +1,8 @@
 from flask import Blueprint, request, jsonify 
 from supabase import create_client 
 import os
+from utils.emit_dashboard_update import emitir_dashboard_update 
+
 
 pedido_bp = Blueprint("pedido", __name__)
 
@@ -28,6 +30,7 @@ def pedido():
     response = supabase.table("productos_pedido").insert(productos).execute()
 
     if response.data:
+        emitir_dashboard_update()
         return jsonify({"message": "Pedido insertado correctamente en Supabase"}), 201
     else:
         return jsonify({"error": "Error al insertar en Supabase", "details": response}), 500

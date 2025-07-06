@@ -1,5 +1,8 @@
-from flask import Flask, request, abort
+import eventlet
+eventlet.monkey_patch()
+from flask import Flask, request, abort, jsonify
 from flask_cors import CORS
+from socket_instance import socketio, emit
 from dotenv import load_dotenv
 import os
 
@@ -8,11 +11,12 @@ load_dotenv()
 
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {
-    "origins": [
-        os.getenv("NETLIFY_URL")
-    ],
+    "origins": ["*"],
     "supports_credentials": True
 }})
+
+# Inicializar SocketIO
+socketio.init_app(app, async_mode="eventlet")
 
 
 
@@ -29,13 +33,6 @@ app.register_blueprint(dashboard_bp)
 app.register_blueprint(print_bp)
 app.register_blueprint(cierre_bp)
 
-# @app.before_request
-# def validar_origen():
-#     origen_valido = "https://rapid-food-pma.netlify.app/"
-#     origen = request.headers.get("Origin", "")
-#     if origen and origen != origen_valido:
-#         abort(403)
-
 @app.after_request
 def aplicar_cors_headers(response):
     response.headers["Access-Control-Allow-Origin"] = os.getenv("NETLIFY_URL")
@@ -44,5 +41,12 @@ def aplicar_cors_headers(response):
     return response
 
 
+# Evento al conectar
+@socketio.on("connect")
+def handle_connect():
+    print("🟢 Cliente conectado vía WebSocket")
+    emit("server_msg", {"msg": "Conexión exitosa con Flask WebSocket"})
+
+# 🔁 Reemplazamos app.run por socketio.run
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
+    socketio.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=False)
