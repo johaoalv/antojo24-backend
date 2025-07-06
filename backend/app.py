@@ -1,5 +1,5 @@
-import eventlet
-eventlet.monkey_patch()
+from gevent import monkey
+monkey.patch_all()
 from flask import Flask, request, abort, jsonify
 from flask_cors import CORS
 from socket_instance import socketio, emit
@@ -16,7 +16,8 @@ CORS(app, resources={r"/api/*": {
 }})
 
 # Inicializar SocketIO
-socketio.init_app(app, async_mode="eventlet")
+socketio.init_app(app, async_mode="gevent", cors_allowed_origins=[os.getenv("NETLIFY_URL")])
+
 
 
 
@@ -49,4 +50,4 @@ def handle_connect():
 
 # 🔁 Reemplazamos app.run por socketio.run
 if __name__ == "__main__":
-    socketio.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=False)
+    socketio.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
