@@ -1,14 +1,10 @@
 #archivo cierre.py
 from flask import Blueprint, request, jsonify
 from datetime import datetime, timedelta
-from supabase import create_client
 import os
+from db import fetch_all, fetch_one, fetch_all as query_fetch_all, execute, insert_many
 
 cierre_bp = Blueprint("cierre", __name__)
-
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
 print("🚀 cierre.py se está cargando")
 
@@ -36,22 +32,35 @@ def get_pedidos_hoy():
     print(f"[DEBUG] Rango de fechas: {inicio} a {fin}")  # 👈 Nuevo
 
     try:
-        response = supabase.table("productos_pedido") \
-            .select("*") \
-            .eq("sucursal_id", sucursal_id) \
-            .gte("fecha", inicio) \
-            .lte("fecha", fin) \
-            .execute()
+        # Debug completo de la consulta
+        sql = "SELECT * FROM productos_pedido WHERE sucursal_id = :sucursal_id AND fecha >= :inicio AND fecha <= :fin"
+        params = {"sucursal_id": sucursal_id, "inicio": inicio, "fin": fin}
         
-        print(f"[DEBUG] Respuesta de Supabase: {response}")  # 👈 Nuevo
+        print("[DEBUG] -------- Diagnóstico de consulta --------")
+        print(f"SQL: {sql}")
+        print(f"Parámetros: {params}")
         
-        if not response.data:
+        # Primero veamos si hay algún pedido sin filtros
+        todos_pedidos = fetch_all("SELECT COUNT(*) as total, MIN(fecha) as primer_pedido, MAX(fecha) as ultimo_pedido FROM productos_pedido")
+        print(f"[DEBUG] Total pedidos en BD: {todos_pedidos}")
+        
+        # Ahora la consulta real
+        rows = fetch_all(sql, params)
+        print(f"[DEBUG] Respuesta de BD: {rows}")
+        
+        # Si no hay resultados, veamos qué pedidos hay para esta sucursal
+        if not rows:
+            pedidos_sucursal = fetch_all(
+                "SELECT COUNT(*) as total, MIN(fecha) as primer_pedido, MAX(fecha) as ultimo_pedido FROM productos_pedido WHERE sucursal_id = :sucursal_id",
+                {"sucursal_id": sucursal_id}
+            )
+            print(f"[DEBUG] Pedidos de esta sucursal: {pedidos_sucursal}")
             return jsonify({"error": "No hay pedidos hoy"}), 404
 
-        return jsonify(response.data), 200
-        
+        return jsonify(rows), 200
+
     except Exception as e:
-        print(f"[ERROR] Excepción: {str(e)}")  # 👈 Nuevo
+        print(f"[ERROR] Excepción: {str(e)}")
         return jsonify({"error": "Error interno"}), 500
 
 @cierre_bp.route("/api/cierre-caja", methods=["POST"])
@@ -67,26 +76,19 @@ def cierre_caja():
     fecha_hoy = now.date()
 
     # 1. Validar si ya existe cierre
-    cierre_existente = supabase.table("cierres_caja") \
-        .select("*") \
-        .eq("sucursal_id", sucursal_id) \
-        .eq("fecha_cierre", str(fecha_hoy)) \
-        .execute()
+    sql_check = "SELECT * FROM cierres_caja WHERE sucursal_id = :sucursal_id AND fecha_cierre = :fecha_cierre LIMIT 1"
+    cierre_existente = fetch_one(sql_check, {"sucursal_id": sucursal_id, "fecha_cierre": str(fecha_hoy)})
 
-    if cierre_existente.data:
+    if cierre_existente:
         return jsonify({"error": "Ya existe un cierre para hoy"}), 409
 
     inicio, fin, fecha_hoy = get_rango_fecha_panama()
 
     # 2. Obtener las ventas del día
-    ventas = supabase.table("productos_pedido") \
-    .select("*") \
-    .eq("sucursal_id", sucursal_id) \
-    .gte("fecha", inicio) \
-    .lte("fecha", fin) \
-    .execute()
+    sql_ventas = "SELECT * FROM productos_pedido WHERE sucursal_id = :sucursal_id AND fecha >= :inicio AND fecha <= :fin"
+    ventas = fetch_all(sql_ventas, {"sucursal_id": sucursal_id, "inicio": inicio, "fin": fin})
 
-    if not ventas.data:
+    if not ventas:
         return jsonify({"error": "No hay ventas registradas hoy"}), 404
 
     # 3. Agrupar por método de pago y calcular totales
@@ -101,7 +103,7 @@ def cierre_caja():
 
     pedidos_unicos = set()
 
-    for venta in ventas.data:
+    for venta in ventas:
         metodo = venta.get("metodo_pago")
         total = venta.get("total_item", 0)
         producto = venta.get("producto")
@@ -120,7 +122,8 @@ def cierre_caja():
             productos[producto] = venta.get("cantidad", 1)
 
     # 4. Insertar en cierres_caja
-    resultado = supabase.table("cierres_caja").insert([{
+    insert_sql = "INSERT INTO cierres_caja (sucursal_id, fecha_cierre, hora_cierre, total_efectivo, total_tarjeta, total_transferencia, total_general, ventas_realizadas, creado_por, detalle_json) VALUES (:sucursal_id, :fecha_cierre, :hora_cierre, :total_efectivo, :total_tarjeta, :total_transferencia, :total_general, :ventas_realizadas, :creado_por, :detalle_json) RETURNING *"
+    params = {
         "sucursal_id": sucursal_id,
         "fecha_cierre": str(fecha_hoy),
         "hora_cierre": now.isoformat(),
@@ -131,9 +134,16 @@ def cierre_caja():
         "ventas_realizadas": totales["ventas_realizadas"],
         "creado_por": creado_por,
         "detalle_json": productos
-    }]).execute()
+    }
 
-    return jsonify({"message": "Cierre realizado con éxito", "resumen": resultado.data[0]})
+    try:
+        resumen = fetch_one(insert_sql, params)
+    except Exception:
+        # Fallback: intentar insert simple sin RETURNING
+        insert_result = insert_many("cierres_caja", [params])
+        resumen = params if insert_result.get("inserted", 0) > 0 else None
+
+    return jsonify({"message": "Cierre realizado con éxito", "resumen": resumen})
 
 @cierre_bp.route("/api/test-cierre", methods=["GET"])
 def test_cierre():

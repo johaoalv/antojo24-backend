@@ -30,8 +30,8 @@ def pedido():
             
             # 2. Insertar los productos del pedido
             sql_productos = """
-                INSERT INTO productos_pedido (pedido_id, producto, cantidad, total_item)
-                VALUES (:pedido_id, :producto, :cantidad, :total_item)
+                INSERT INTO productos_pedido (pedido_id, producto, cantidad, total_item, total_pedido, metodo_pago, sucursal_id, fecha)
+                VALUES (:pedido_id, :producto, :cantidad, :total_item, :total_pedido, :metodo_pago, :sucursal_id, :fecha)
             """
             
             for item in data["pedido"]:
@@ -39,7 +39,11 @@ def pedido():
                     "pedido_id": data["pedido_id"],
                     "producto": item["producto"],
                     "cantidad": item["cantidad"],
-                    "total_item": item["total_item"]
+                    "total_item": item["total_item"],
+                    "total_pedido": data["total_pedido"],
+                    "metodo_pago": data["metodo_pago"],
+                    "sucursal_id": data["sucursal_id"],
+                    "fecha": data["fecha"]
                 })
             
             current_app.logger.debug("Productos insertados")
