@@ -2,12 +2,10 @@
 from flask import Blueprint, request, jsonify
 from datetime import datetime, timedelta
 import os
+import json
 from db import fetch_all, fetch_one, fetch_all as query_fetch_all, execute, insert_many
 
 cierre_bp = Blueprint("cierre", __name__)
-
-print("🚀 cierre.py se está cargando")
-
 
 def get_panama_datetime():
     return datetime.utcnow() - timedelta(hours=5)  # 👈 "utcnow" correcto
@@ -23,30 +21,21 @@ def get_rango_fecha_panama():
 @cierre_bp.route("/api/pedidos-hoy", methods=["GET"])
 def get_pedidos_hoy():
     sucursal_id = request.args.get("sucursal_id")
-    print(f"[DEBUG] sucursal_id recibido: {sucursal_id}")  # 👈 Nuevo
-    
     if not sucursal_id:
         return jsonify({"error": "sucursal_id es requerido"}), 400
 
     inicio, fin, _ = get_rango_fecha_panama()
-    print(f"[DEBUG] Rango de fechas: {inicio} a {fin}")  # 👈 Nuevo
 
     try:
         # Debug completo de la consulta
         sql = "SELECT * FROM productos_pedido WHERE sucursal_id = :sucursal_id AND fecha >= :inicio AND fecha <= :fin"
         params = {"sucursal_id": sucursal_id, "inicio": inicio, "fin": fin}
         
-        print("[DEBUG] -------- Diagnóstico de consulta --------")
-        print(f"SQL: {sql}")
-        print(f"Parámetros: {params}")
-        
         # Primero veamos si hay algún pedido sin filtros
         todos_pedidos = fetch_all("SELECT COUNT(*) as total, MIN(fecha) as primer_pedido, MAX(fecha) as ultimo_pedido FROM productos_pedido")
-        print(f"[DEBUG] Total pedidos en BD: {todos_pedidos}")
         
         # Ahora la consulta real
         rows = fetch_all(sql, params)
-        print(f"[DEBUG] Respuesta de BD: {rows}")
         
         # Si no hay resultados, veamos qué pedidos hay para esta sucursal
         if not rows:
@@ -54,7 +43,6 @@ def get_pedidos_hoy():
                 "SELECT COUNT(*) as total, MIN(fecha) as primer_pedido, MAX(fecha) as ultimo_pedido FROM productos_pedido WHERE sucursal_id = :sucursal_id",
                 {"sucursal_id": sucursal_id}
             )
-            print(f"[DEBUG] Pedidos de esta sucursal: {pedidos_sucursal}")
             return jsonify({"error": "No hay pedidos hoy"}), 404
 
         return jsonify(rows), 200
@@ -68,37 +56,43 @@ def cierre_caja():
     data = request.json
     sucursal_id = data.get("sucursal_id")
     creado_por = data.get("creado_por")
+    print(f"[DEBUG CIERRE] >>> Inicia proceso para sucursal: {sucursal_id}, por: {creado_por}")
 
     if not sucursal_id or not creado_por:
+        print(f"[DEBUG CIERRE] ERROR: Datos incompletos. Abortando.")
         return jsonify({"error": "Datos incompletos"}), 400
 
     now = get_panama_datetime()
     fecha_hoy = now.date()
+    print(f"[DEBUG CIERRE] Fecha de hoy (objeto date): {fecha_hoy}, Tipo: {type(fecha_hoy)}")
 
     # 1. Validar si ya existe cierre
     sql_check = "SELECT * FROM cierres_caja WHERE sucursal_id = :sucursal_id AND fecha_cierre = :fecha_cierre LIMIT 1"
-    cierre_existente = fetch_one(sql_check, {"sucursal_id": sucursal_id, "fecha_cierre": str(fecha_hoy)})
+    # Usamos string para la fecha para asegurar consistencia con la inserción
+    params_check = {"sucursal_id": sucursal_id, "fecha_cierre": fecha_hoy}
+    print(f"[DEBUG CIERRE] Verificando existencia con params: {params_check}")
+    cierre_existente = fetch_one(sql_check, params_check)
+    print(f"[DEBUG CIERRE] Resultado de la verificación: {cierre_existente}")
 
     if cierre_existente:
-        return jsonify({"error": "Ya existe un cierre para hoy"}), 409
+        print(f"[DEBUG CIERRE] Cierre ya existe. Devolviendo 409.")
+        return jsonify({"message": "Ya existe un cierre para hoy", "error": "Cierre duplicado"}), 409
 
-    inicio, fin, fecha_hoy = get_rango_fecha_panama()
+    inicio, fin, _ = get_rango_fecha_panama()
+    print(f"[DEBUG CIERRE] Rango de fechas para ventas: de {inicio} a {fin}")
 
     # 2. Obtener las ventas del día
     sql_ventas = "SELECT * FROM productos_pedido WHERE sucursal_id = :sucursal_id AND fecha >= :inicio AND fecha <= :fin"
-    ventas = fetch_all(sql_ventas, {"sucursal_id": sucursal_id, "inicio": inicio, "fin": fin})
+    params_ventas = {"sucursal_id": sucursal_id, "inicio": inicio, "fin": fin}
+    print(f"[DEBUG CIERRE] Consultando ventas con params: {params_ventas}")
+    ventas = fetch_all(sql_ventas, params_ventas)
 
     if not ventas:
+        print(f"[DEBUG CIERRE] No se encontraron ventas para el rango. Devolviendo 404.")
         return jsonify({"error": "No hay ventas registradas hoy"}), 404
 
     # 3. Agrupar por método de pago y calcular totales
-    totales = {
-        "efectivo": 0,
-        "tarjeta": 0,
-        "transferencia": 0,
-        "total_general": 0,
-        "ventas_realizadas": 0
-    }
+    totales = {"total_general": 0, "ventas_realizadas": 0}
     productos = {}
 
     pedidos_unicos = set()
@@ -121,29 +115,44 @@ def cierre_caja():
         else:
             productos[producto] = venta.get("cantidad", 1)
 
+    # Convertir Decimal a float/int para serialización JSON
+    productos_serializables = {k: float(v) for k, v in productos.items()}
+
+    # Convertir totales de Decimal a float para consistencia
+    for k, v in totales.items():
+        totales[k] = float(v)
+
+    print(f"[DEBUG CIERRE] Totales calculados: {totales}")
+    print(f"[DEBUG CIERRE] Productos agrupados: {productos_serializables}")
     # 4. Insertar en cierres_caja
     insert_sql = "INSERT INTO cierres_caja (sucursal_id, fecha_cierre, hora_cierre, total_efectivo, total_tarjeta, total_transferencia, total_general, ventas_realizadas, creado_por, detalle_json) VALUES (:sucursal_id, :fecha_cierre, :hora_cierre, :total_efectivo, :total_tarjeta, :total_transferencia, :total_general, :ventas_realizadas, :creado_por, :detalle_json) RETURNING *"
     params = {
         "sucursal_id": sucursal_id,
-        "fecha_cierre": str(fecha_hoy),
+        "fecha_cierre": fecha_hoy,
         "hora_cierre": now.isoformat(),
-        "total_efectivo": totales["efectivo"],
-        "total_tarjeta": totales["tarjeta"],
-        "total_transferencia": totales["transferencia"],
+        "total_efectivo": totales.get("efectivo", 0),
+        "total_tarjeta": totales.get("tarjeta", 0),
+        "total_transferencia": totales.get("transferencia", 0) + totales.get("yappy", 0),
         "total_general": totales["total_general"],
         "ventas_realizadas": totales["ventas_realizadas"],
         "creado_por": creado_por,
-        "detalle_json": productos
+        "detalle_json": json.dumps(productos_serializables)
     }
+    print(f"[DEBUG CIERRE] Params para la inserción final: {params}")
 
     try:
         resumen = fetch_one(insert_sql, params)
-    except Exception:
-        # Fallback: intentar insert simple sin RETURNING
-        insert_result = insert_many("cierres_caja", [params])
-        resumen = params if insert_result.get("inserted", 0) > 0 else None
+        print(f"[DEBUG CIERRE] Resultado de la inserción (resumen): {resumen}")
+        if not resumen:
+             print(f"[DEBUG CIERRE] La inserción no devolvió resumen. Devolviendo 500.")
+             return jsonify({"error": "No se pudo registrar el cierre de caja"}), 500
+        
+        print(f"[DEBUG CIERRE] Proceso completado con éxito. Devolviendo 200.")
+        return jsonify({"message": "Cierre realizado con éxito", "resumen": resumen}), 200
 
-    return jsonify({"message": "Cierre realizado con éxito", "resumen": resumen})
+    except Exception as e:
+        print(f"[DEBUG CIERRE] EXCEPCIÓN durante la inserción: {str(e)}")
+        return jsonify({"error": f"Error al insertar cierre: {str(e)}"}), 500
 
 @cierre_bp.route("/api/test-cierre", methods=["GET"])
 def test_cierre():

@@ -32,7 +32,7 @@ def fetch_all(sql: str, params: dict | None = None):
         return [dict(r) for r in result.mappings().all()]
 
 def fetch_one(sql: str, params: dict | None = None):
-    with engine.connect() as conn:
+    with engine.begin() as conn:
         result = conn.execute(text(sql), params or {})
         row = result.mappings().first()
         return dict(row) if row else None
