@@ -1,45 +1,66 @@
 # utils/emit_dashboard_update.py
 
 from datetime import date, timedelta
-from supabase import create_client
-import os
 from socket_instance import socketio
-
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+from db import fetch_all # 👈 Importamos la función correcta
 
 def emitir_dashboard_update():
-    fecha_hoy = str(date.today())
-    fecha_ayer = str(date.today() - timedelta(days=1))
+    try:
+        fecha_hoy = str(date.today())
+        fecha_ayer = str(date.today() - timedelta(days=1))
 
-    response_pedidos = supabase.table("pedidos").select("total_pedido, fecha, metodo_pago").execute()
-    response_productos = supabase.table("productos_pedido").select("producto, cantidad").execute()
+        # Reutilizamos la misma lógica de consulta que /api/dashboard
+        sql_pedidos = """
+            SELECT p.total_pedido, p.fecha, p.metodo_pago 
+            FROM pedidos p 
+            WHERE p.fecha >= :fecha_ayer
+        """
+        sql_productos = """
+            SELECT pp.producto, pp.cantidad 
+            FROM productos_pedido pp
+            JOIN pedidos p ON p.pedido_id = pp.pedido_id
+            WHERE p.fecha >= :fecha_inicio_mes
+        """
+        
+        pedidos = fetch_all(sql_pedidos, {"fecha_ayer": fecha_ayer})
+        productos = fetch_all(sql_productos, {"fecha_inicio_mes": str(date.today().replace(day=1))})
 
-    pedidos = response_pedidos.data or []
-    productos = response_productos.data or []
+        # --- El resto de la lógica es idéntica a la del dashboard ---
 
-    ventas_hoy = sum(p["total_pedido"] for p in pedidos if p["fecha"] == fecha_hoy)
-    ventas_ayer = sum(p["total_pedido"] for p in pedidos if p["fecha"] == fecha_ayer)
+        def fecha_solo(f):
+            return str(f)[:10] if f else ""
 
-    productos_vendidos = {}
-    for p in productos:
-        productos_vendidos[p["producto"]] = productos_vendidos.get(p["producto"], 0) + p["cantidad"]
+        def to_number(v):
+            try:
+                return float(v)
+            except (ValueError, TypeError):
+                return 0.0
 
-    producto_mas_vendido = max(productos_vendidos, key=productos_vendidos.get) if productos_vendidos else "N/A"
+        ventas_hoy = sum(to_number(p.get("total_pedido")) for p in pedidos if fecha_solo(p.get("fecha")) == fecha_hoy)
+        ventas_ayer = sum(to_number(p.get("total_pedido")) for p in pedidos if fecha_solo(p.get("fecha")) == fecha_ayer)
 
-    metodos_pago = {}
-    for p in pedidos:
-        metodos_pago[p["metodo_pago"]] = metodos_pago.get(p["metodo_pago"], 0) + 1
+        productos_vendidos = {}
+        for p in productos:
+            if p.get("producto"):
+                productos_vendidos[p["producto"]] = productos_vendidos.get(p["producto"], 0) + int(p.get("cantidad", 0) or 0)
 
-    metodo_pago_mas_usado = max(metodos_pago, key=metodos_pago.get) if metodos_pago else "N/A"
+        producto_mas_vendido = max(productos_vendidos, key=productos_vendidos.get) if productos_vendidos else "N/A"
 
-    variacion_porcentaje = ((ventas_hoy - ventas_ayer) / ventas_ayer * 100) if ventas_ayer > 0 else 100
+        metodos_pago = {}
+        for p in pedidos:
+            metodo = p.get("metodo_pago") or "unknown"
+            metodos_pago[metodo] = metodos_pago.get(metodo, 0) + 1
 
-    socketio.emit("dashboard_update", {
-        "ventas_hoy": ventas_hoy,
-        "ventas_ayer": ventas_ayer,
-        "producto_mas_vendido": producto_mas_vendido,
-        "metodo_pago_mas_usado": metodo_pago_mas_usado,
-        "variacion_porcentaje": round(variacion_porcentaje, 2)
-    })
+        metodo_pago_mas_usado = max(metodos_pago, key=metodos_pago.get) if metodos_pago else "N/A"
+
+        variacion_porcentaje = ((ventas_hoy - ventas_ayer) / ventas_ayer * 100) if ventas_ayer > 0 else (100 if ventas_hoy > 0 else 0)
+
+        socketio.emit("dashboard_update", {
+            "ventas_hoy": ventas_hoy,
+            "ventas_ayer": ventas_ayer,
+            "producto_mas_vendido": producto_mas_vendido,
+            "metodo_pago_mas_usado": metodo_pago_mas_usado,
+            "variacion_porcentaje": round(variacion_porcentaje, 2)
+        })
+    except Exception as e:
+        print(f"❌ Error en emitir_dashboard_update: {e}")
