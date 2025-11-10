@@ -10,6 +10,15 @@ cierre_bp = Blueprint("cierre", __name__)
 def get_panama_datetime():
     return datetime.utcnow() - timedelta(hours=5)  # 👈 "utcnow" correcto
 
+def parse_numeric_value(value, default, field_name):
+    """Convierte valores enviados como string a float, con fallback y validación."""
+    if value is None or value == "":
+        return float(default)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"Valor numérico inválido para {field_name}")
+
 def get_rango_fecha_panama():
     now = get_panama_datetime()
     fecha_str = now.strftime("%Y-%m-%d")
@@ -124,16 +133,53 @@ def cierre_caja():
 
     print(f"[DEBUG CIERRE] Totales calculados: {totales}")
     print(f"[DEBUG CIERRE] Productos agrupados: {productos_serializables}")
+
+    try:
+        total_general = parse_numeric_value(data.get("total_general"), totales["total_general"], "total_general")
+        total_efectivo = parse_numeric_value(data.get("total_efectivo"), totales.get("efectivo", 0), "total_efectivo")
+        total_tarjeta = parse_numeric_value(data.get("total_tarjeta"), totales.get("tarjeta", 0), "total_tarjeta")
+        total_transferencia = parse_numeric_value(
+            data.get("total_transferencia"),
+            totales.get("transferencia", 0) + totales.get("yappy", 0),
+            "total_transferencia"
+        )
+        total_real = parse_numeric_value(data.get("total_real"), total_general, "total_real")
+    except ValueError as parse_error:
+        print(f"[DEBUG CIERRE] ERROR PARSE: {parse_error}")
+        return jsonify({"error": str(parse_error)}), 400
+
+    if total_real > total_general:
+        sobrante = round(total_real - total_general, 2)
+        faltante = 0.0
+    elif total_real < total_general:
+        faltante = round(total_general - total_real, 2)
+        sobrante = 0.0
+    else:
+        sobrante = 0.0
+        faltante = 0.0
+
+    print(
+        f"[DEBUG CIERRE] Totales finalizados => general: {total_general}, real: {total_real}, "
+        f"sobrante: {sobrante}, faltante: {faltante}"
+    )
     # 4. Insertar en cierres_caja
-    insert_sql = "INSERT INTO cierres_caja (sucursal_id, fecha_cierre, hora_cierre, total_efectivo, total_tarjeta, total_transferencia, total_general, ventas_realizadas, creado_por, detalle_json) VALUES (:sucursal_id, :fecha_cierre, :hora_cierre, :total_efectivo, :total_tarjeta, :total_transferencia, :total_general, :ventas_realizadas, :creado_por, :detalle_json) RETURNING *"
+    insert_sql = (
+        "INSERT INTO cierres_caja (sucursal_id, fecha_cierre, hora_cierre, total_efectivo, total_tarjeta, "
+        "total_transferencia, total_general, total_real, sobrante, faltante, ventas_realizadas, creado_por, detalle_json) "
+        "VALUES (:sucursal_id, :fecha_cierre, :hora_cierre, :total_efectivo, :total_tarjeta, :total_transferencia, "
+        ":total_general, :total_real, :sobrante, :faltante, :ventas_realizadas, :creado_por, :detalle_json) RETURNING *"
+    )
     params = {
         "sucursal_id": sucursal_id,
         "fecha_cierre": fecha_hoy,
         "hora_cierre": now.isoformat(),
-        "total_efectivo": totales.get("efectivo", 0),
-        "total_tarjeta": totales.get("tarjeta", 0),
-        "total_transferencia": totales.get("transferencia", 0) + totales.get("yappy", 0),
-        "total_general": totales["total_general"],
+        "total_efectivo": total_efectivo,
+        "total_tarjeta": total_tarjeta,
+        "total_transferencia": total_transferencia,
+        "total_general": total_general,
+        "total_real": total_real,
+        "sobrante": sobrante,
+        "faltante": faltante,
         "ventas_realizadas": totales["ventas_realizadas"],
         "creado_por": creado_por,
         "detalle_json": json.dumps(productos_serializables)
@@ -148,7 +194,17 @@ def cierre_caja():
              return jsonify({"error": "No se pudo registrar el cierre de caja"}), 500
         
         print(f"[DEBUG CIERRE] Proceso completado con éxito. Devolviendo 200.")
-        return jsonify({"message": "Cierre realizado con éxito", "resumen": resumen}), 200
+        resumen_payload = {
+            "creado_por": resumen.get("creado_por", creado_por),
+            "sucursal_id": resumen.get("sucursal_id", sucursal_id),
+            "total_general": float(resumen.get("total_general", total_general)),
+            "total_real": float(resumen.get("total_real", total_real)),
+            "sobrante": float(resumen.get("sobrante", sobrante)),
+            "faltante": float(resumen.get("faltante", faltante)),
+            "ventas_realizadas": int(resumen.get("ventas_realizadas", totales["ventas_realizadas"]))
+        }
+
+        return jsonify({"message": "Cierre realizado con éxito", "resumen": resumen_payload}), 200
 
     except Exception as e:
         print(f"[DEBUG CIERRE] EXCEPCIÓN durante la inserción: {str(e)}")
