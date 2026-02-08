@@ -201,7 +201,8 @@ def cierre_caja():
             "total_real": float(resumen.get("total_real", total_real)),
             "sobrante": float(resumen.get("sobrante", sobrante)),
             "faltante": float(resumen.get("faltante", faltante)),
-            "ventas_realizadas": int(resumen.get("ventas_realizadas", totales["ventas_realizadas"]))
+            "ventas_realizadas": int(resumen.get("ventas_realizadas", totales["ventas_realizadas"])),
+            "desglose": {k: float(v) for k, v in totales.items() if k not in ["total_general", "ventas_realizadas"]}
         }
 
         return jsonify({"message": "Cierre realizado con éxito", "resumen": resumen_payload}), 200

@@ -1,6 +1,6 @@
-# Backend - Rapid Food
+# Backend - Antojo24
 
-Este documento proporciona los pasos necesarios para configurar y ejecutar el backend del proyecto **Rapid Food** en tu entorno local.
+Este documento proporciona los pasos necesarios para configurar y ejecutar el backend del proyecto **Antojo24** en tu entorno local.
 
 ## Tecnologías utilizadas
 - **Backend:** Python

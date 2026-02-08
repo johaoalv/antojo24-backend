@@ -30,12 +30,14 @@ from routes.pedido import pedido_bp
 from routes.dashboard import dashboard_bp
 from routes.print import print_bp
 from routes.cierre import cierre_bp
+from routes.insumos import insumos_bp
 
 app.register_blueprint(auth_bp)
 app.register_blueprint(pedido_bp)
 app.register_blueprint(dashboard_bp)
 app.register_blueprint(print_bp)
 app.register_blueprint(cierre_bp)
+app.register_blueprint(insumos_bp)
 
 @app.after_request
 def aplicar_cors_headers(response):

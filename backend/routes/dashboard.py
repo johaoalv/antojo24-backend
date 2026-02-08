@@ -2,7 +2,19 @@
 from flask import Blueprint, jsonify, current_app
 from datetime import date, timedelta
 import os
-from db import fetch_all
+from db import fetch_all, fetch_one
+
+def to_number(v):
+    if v is None: return 0.0
+    try:
+        return float(v)
+    except Exception:
+        return 0.0
+
+def fecha_solo(f):
+    if not f:
+        return ""
+    return str(f)[:10]
 
 dashboard_bp = Blueprint("dashboard", __name__)
 
@@ -46,20 +58,39 @@ def get_dashboard():
             current_app.logger.error("Error en consulta de dashboard: %s", db_error)
             return jsonify({"error": "Error al obtener datos del dashboard"}), 500
 
-        # normalizar y calcular ventas (fecha puede contener hora, tomamos la parte YYYY-MM-DD)
-        def fecha_solo(f):
-            if not f:
-                return ""
-            return str(f)[:10]
+        # 1. Calcular Inversión en Stock (Actual)
+        sql_inversion = "SELECT SUM(stock * costo_unidad) as inversion FROM insumos"
+        res_inversion = fetch_one(sql_inversion)
+        inversion_actual = to_number(res_inversion.get("inversion", 0)) if res_inversion else 0.0
 
-        def to_number(v):
-            try:
-                return float(v)
-            except Exception:
-                return 0.0
+        # 2. Calcular Costo de Productos (Recetas) para Margen
+        # Obtenemos todos los insumos y recetas para calcular costos por producto
+        sql_costo_recetas = """
+            SELECT r.producto, SUM(r.cantidad_requerida * i.costo_unidad) as costo_total
+            FROM recetas r
+            JOIN insumos i ON r.insumo_id = i.id
+            GROUP BY r.producto
+        """
+        costos_recetas = {row["producto"].lower(): to_number(row["costo_total"]) for row in fetch_all(sql_costo_recetas)}
 
-        ventas_hoy = sum(to_number(p.get("total_pedido", 0)) for p in pedidos if fecha_solo(p.get("fecha")) == fecha_hoy)
-        ventas_ayer = sum(to_number(p.get("total_pedido", 0)) for p in pedidos if fecha_solo(p.get("fecha")) == fecha_ayer)
+        # 3. Calcular Margen de Hoy
+        def calcular_margen_dia(lista_pedidos, fecha_filtro):
+            ventas = sum(to_number(p.get("total_pedido", 0)) for p in lista_pedidos if fecha_solo(p.get("fecha")) == fecha_filtro)
+            
+            # Para el costo, necesitamos ver qué productos se vendieron ese día
+            # (Nota: esto requiere consultar productos_pedido por fecha)
+            sql_prods_dia = """
+                SELECT producto, cantidad 
+                FROM productos_pedido 
+                WHERE fecha::text LIKE :fecha_filtro
+            """
+            prods_dia = fetch_all(sql_prods_dia, {"fecha_filtro": f"{fecha_filtro}%"})
+            costo_dia = sum(costos_recetas.get(p["producto"].lower(), 0) * to_number(p["cantidad"]) for p in prods_dia)
+            
+            return ventas, (ventas - costo_dia)
+
+        ventas_hoy, margen_hoy = calcular_margen_dia(pedidos, fecha_hoy)
+        ventas_ayer, _ = calcular_margen_dia(pedidos, fecha_ayer)
 
         productos_vendidos = {}
         for p in productos:
@@ -87,8 +118,10 @@ def get_dashboard():
         variacion_porcentaje = ((ventas_hoy - ventas_ayer) / ventas_ayer * 100) if ventas_ayer > 0 else 100
 
         return jsonify({
-            "ventas_hoy": ventas_hoy,
-            "ventas_ayer": ventas_ayer,
+            "ventas_hoy": round(ventas_hoy, 2),
+            "ventas_ayer": round(ventas_ayer, 2),
+            "margen_hoy": round(margen_hoy, 2),
+            "inversion_actual": round(inversion_actual, 2),
             "producto_mas_vendido": producto_mas_vendido,
             "metodo_pago_mas_usado": metodo_pago_mas_usado,
             "variacion_porcentaje": round(variacion_porcentaje, 2)
