@@ -74,6 +74,32 @@ def pedido():
                 })
             
             current_app.logger.debug("Productos insertados")
+            
+            # 3. Descontar stock automáticamente basado en recetas
+            for item in data["pedido"]:
+                producto_nombre = item["producto"].lower()
+                cantidad_vendida = item["cantidad"]
+                
+                # Buscar insumos vinculados a este producto
+                sql_receta = """
+                    SELECT insumo_id, cantidad_requerida 
+                    FROM recetas 
+                    WHERE LOWER(producto) = :producto
+                """
+                ingredientes = conn.execute(text(sql_receta), {"producto": producto_nombre}).mappings().all()
+                
+                for ing in ingredientes:
+                    sql_update_stock = """
+                        UPDATE insumos 
+                        SET stock = stock - :cantidad_total
+                        WHERE id = :insumo_id
+                    """
+                    conn.execute(text(sql_update_stock), {
+                        "cantidad_total": float(ing["cantidad_requerida"]) * int(cantidad_vendida),
+                        "insumo_id": ing["insumo_id"]
+                    })
+            
+            current_app.logger.debug("Stock de insumos actualizado")
             # La transacción se confirma automáticamente si llegamos aquí
             
         current_app.logger.info("🚀 Emitiendo actualización de dashboard vía WebSocket...")
