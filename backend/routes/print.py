@@ -16,6 +16,7 @@ def imprimir_ticket():
         pedido = data.get("pedido", [])
         total_pedido = data.get("total_pedido", 0.00)
         metodo_pago = data.get("metodo_pago", "N/A")
+        nombre_cliente = data.get("nombre_cliente", "")
         pedido_id = pedido[0].get("pedido_id", "N/A") if pedido else "N/A"
 
         # Tamaño de papel térmico: 58mm de ancho, largo flexible
@@ -32,6 +33,13 @@ def imprimir_ticket():
         c.setFont("Helvetica-Bold", 10)
         c.drawCentredString(width / 2, y, "RAPID FOOD")
         y -= 15
+        
+        # Agregar nombre del cliente si existe
+        if nombre_cliente:
+            c.setFont("Helvetica-Bold", 9)
+            c.drawString(x, y, f"Cliente: {nombre_cliente}")
+            y -= 12
+        
         c.setFont("Helvetica", 8)
         c.drawString(x, y, f"Pedido ID: {pedido_id}")
         y -= 12
@@ -57,7 +65,10 @@ def imprimir_ticket():
         c.drawString(x, y, f"TOTAL: ${total_pedido:.2f}")
         y -= 18
         c.setFont("Helvetica", 9)
-        c.drawCentredString(width / 2, y, "¡Gracias por su compra!")
+        c.drawCentredString(width / 2, y, "Gracias por su compra :3")
+        y -= 12
+        c.setFont("Helvetica", 8)
+        c.drawCentredString(width / 2, y, "@antojo24.pa")
 
         c.showPage()
         c.save()
