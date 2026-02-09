@@ -22,109 +22,62 @@ dashboard_bp = Blueprint("dashboard", __name__)
 @dashboard_bp.route("/api/dashboard", methods=["GET"])
 def get_dashboard():
     try:
-        fecha_hoy = str(date.today())
-        fecha_ayer = str(date.today() - timedelta(days=1))
-
-        # obtener pedidos y productos desde la DB con joins apropiados
-        sql_pedidos = """
-            SELECT p.total_pedido, p.fecha, p.metodo_pago 
-            FROM pedidos p 
-            WHERE p.fecha >= :fecha_ayer
-        """
-        
-        sql_productos = """
-            SELECT pp.producto, pp.cantidad 
-            FROM productos_pedido pp
-            JOIN pedidos p ON p.pedido_id = pp.pedido_id
-            WHERE p.fecha >= :fecha_inicio_mes
-        """
-        
-        try:
-            # Obtener pedidos de hoy y ayer
-            pedidos = fetch_all(sql_pedidos, {
-                "fecha_ayer": fecha_ayer
-            })
-            
-            # Obtener productos del último mes para estadísticas
-            productos = fetch_all(sql_productos, {
-                "fecha_inicio_mes": str(date.today().replace(day=1))
-            })
-            
-            if pedidos is None or productos is None:
-                current_app.logger.error("Error al consultar la base de datos para dashboard")
-                return jsonify({"error": "Error al obtener datos del dashboard"}), 500
-                
-        except Exception as db_error:
-            current_app.logger.error("Error en consulta de dashboard: %s", db_error)
-            return jsonify({"error": "Error al obtener datos del dashboard"}), 500
-
         # 1. Calcular Inversión en Stock (Actual)
         sql_inversion = "SELECT SUM(stock * costo_unidad) as inversion FROM insumos"
         res_inversion = fetch_one(sql_inversion)
         inversion_actual = to_number(res_inversion.get("inversion", 0)) if res_inversion else 0.0
 
-        # 2. Calcular Costo de Productos (Recetas) para Margen
-        # Obtenemos todos los insumos y recetas para calcular costos por producto
-        sql_costo_recetas = """
-            SELECT r.producto, SUM(r.cantidad_requerida * i.costo_unidad) as costo_total
-            FROM recetas r
-            JOIN insumos i ON r.insumo_id = i.id
-            GROUP BY r.producto
+        # 2. Obtener Historial de Ventas Agrupado por Fecha
+        # Nota: Usamos SUBSTRING para la fecha si es un timestamp string
+        sql_ventas_historial = """
+            SELECT 
+                SUBSTR(fecha::text, 1, 10) as dia,
+                SUM(total_pedido) as total_ventas,
+                SUM(CASE WHEN lower(metodo_pago) = 'efectivo' THEN total_pedido ELSE 0 END) as efectivo,
+                SUM(CASE WHEN lower(metodo_pago) = 'tarjeta' THEN total_pedido ELSE 0 END) as tarjeta,
+                SUM(CASE WHEN lower(metodo_pago) IN ('yappy', 'transferencia') THEN total_pedido ELSE 0 END) as yappy
+            FROM pedidos
+            GROUP BY dia
+            ORDER BY dia DESC
+            LIMIT 30
         """
-        costos_recetas = {row["producto"].lower(): to_number(row["costo_total"]) for row in fetch_all(sql_costo_recetas)}
+        historial_ventas = fetch_all(sql_ventas_historial)
 
-        # 3. Calcular Margen de Hoy
-        def calcular_margen_dia(lista_pedidos, fecha_filtro):
-            ventas = sum(to_number(p.get("total_pedido", 0)) for p in lista_pedidos if fecha_solo(p.get("fecha")) == fecha_filtro)
-            
-            # Para el costo, necesitamos ver qué productos se vendieron ese día
-            # (Nota: esto requiere consultar productos_pedido por fecha)
-            sql_prods_dia = """
-                SELECT producto, cantidad 
-                FROM productos_pedido 
-                WHERE fecha::text LIKE :fecha_filtro
-            """
-            prods_dia = fetch_all(sql_prods_dia, {"fecha_filtro": f"{fecha_filtro}%"})
-            costo_dia = sum(costos_recetas.get(p["producto"].lower(), 0) * to_number(p["cantidad"]) for p in prods_dia)
-            
-            return ventas, (ventas - costo_dia)
+        # 3. Obtener Cierres de Caja para comparar
+        sql_cierres = """
+            SELECT fecha_cierre::text as dia, total_real
+            FROM cierres_caja
+        """
+        cierres = {fecha_solo(c["dia"]): to_number(c["total_real"]) for c in fetch_all(sql_cierres)}
 
-        ventas_hoy, margen_hoy = calcular_margen_dia(pedidos, fecha_hoy)
-        ventas_ayer, _ = calcular_margen_dia(pedidos, fecha_ayer)
+        # 4. Mezclar datos
+        historial_completo = []
+        for v in historial_ventas:
+            dia = v["dia"]
+            historial_completo.append({
+                "fecha": dia,
+                "total_ventas": to_number(v["total_ventas"]),
+                "efectivo": to_number(v["efectivo"]),
+                "tarjeta": to_number(v["tarjeta"]),
+                "yappy": to_number(v["yappy"]),
+                "total_cierre": cierres.get(dia, 0.0)
+            })
 
-        productos_vendidos = {}
-        for p in productos:
-            prod = p.get("producto")
-            cant = p.get("cantidad", 0) or 0
-            try:
-                cant = int(cant)
-            except Exception:
-                try:
-                    cant = int(float(cant))
-                except Exception:
-                    cant = 0
-            if prod:
-                productos_vendidos[prod] = productos_vendidos.get(prod, 0) + cant
-
-        producto_mas_vendido = max(productos_vendidos, key=productos_vendidos.get) if productos_vendidos else "N/A"
-
-        metodos_pago = {}
-        for p in pedidos:
-            metodo = p.get("metodo_pago") or "unknown"
-            metodos_pago[metodo] = metodos_pago.get(metodo, 0) + 1
-
-        metodo_pago_mas_usado = max(metodos_pago, key=metodos_pago.get) if metodos_pago else "N/A"
-
-        variacion_porcentaje = ((ventas_hoy - ventas_ayer) / ventas_ayer * 100) if ventas_ayer > 0 else 100
+        # 5. Producto más vendido (del último mes)
+        sql_top_producto = """
+            SELECT producto, SUM(cantidad) as total_cant
+            FROM productos_pedido
+            GROUP BY producto
+            ORDER BY total_cant DESC
+            LIMIT 1
+        """
+        res_top = fetch_one(sql_top_producto)
+        producto_mas_vendido = res_top["producto"] if res_top else "N/A"
 
         return jsonify({
-            "ventas_hoy": round(ventas_hoy, 2),
-            "ventas_ayer": round(ventas_ayer, 2),
-            "margen_hoy": round(margen_hoy, 2),
             "inversion_actual": round(inversion_actual, 2),
             "producto_mas_vendido": producto_mas_vendido,
-            "metodo_pago_mas_usado": metodo_pago_mas_usado,
-            "variacion_porcentaje": round(variacion_porcentaje, 2)
+            "historial": historial_completo
         }), 200
 
     except Exception as e:
