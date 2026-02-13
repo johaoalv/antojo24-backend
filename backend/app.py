@@ -12,7 +12,12 @@ load_dotenv()
 
 app = Flask(__name__)
 app.logger.setLevel(logging.DEBUG)
-allowed_origins = [os.getenv("NETLIFY_URL"), "http://localhost:5173"]
+allowed_origins = [
+    os.getenv("NETLIFY_URL"), 
+    os.getenv("FRONTEND_URL")
+]
+allowed_origins = [o for o in allowed_origins if o]
+
 CORS(app, resources={r"/api/*": {
     "origins": allowed_origins,
     "supports_credentials": True
