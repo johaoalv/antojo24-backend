@@ -16,8 +16,8 @@ Antes de comenzar, asegúrate de tener instalados los siguientes componentes:
 ## Instalación
 1. **Clonar el repositorio:**
    ```sh
-   git clone https://github.com/tu_usuario/rapid-food-backend.git
-   cd rapid-food-backend
+   git clone https://github.com/tu_usuario/antojo24-backend.git
+   cd antojo24-backend
    ```
 
 2. **Crear y activar un entorno virtual:**
