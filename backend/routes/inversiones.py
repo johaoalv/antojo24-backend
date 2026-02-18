@@ -8,8 +8,14 @@ inversiones_bp = Blueprint("inversiones", __name__)
 @inversiones_bp.route("/api/inversiones", methods=["GET"])
 def get_inversiones():
     try:
-        sql = "SELECT id, fecha::text, monto, descripcion FROM inversiones ORDER BY fecha DESC"
-        results = fetch_all(sql)
+        s_id_filter = request.args.get("sucursal_id")
+        is_global = not s_id_filter or s_id_filter == "global"
+
+        where_clause = "" if is_global else "WHERE sucursal_id = :s_id"
+        params = {} if is_global else {"s_id": s_id_filter}
+
+        sql = f"SELECT id, fecha::text, monto, descripcion, sucursal_id FROM inversiones {where_clause} ORDER BY fecha DESC"
+        results = fetch_all(sql, params)
         return jsonify(results), 200
     except Exception as e:
         current_app.logger.exception("Error en get_inversiones: %s", e)
@@ -22,12 +28,13 @@ def add_inversion():
         monto = data.get("monto")
         descripcion = data.get("descripcion", "")
         fecha = data.get("fecha") or date.today().isoformat()
+        sucursal_id = data.get("sucursal_id") # Opcional, puede ser central/global
 
         if not monto:
             return jsonify({"error": "Monto es requerido"}), 400
 
-        sql = "INSERT INTO inversiones (fecha, monto, descripcion) VALUES (:fecha, :monto, :descripcion)"
-        execute(sql, {"fecha": fecha, "monto": monto, "descripcion": descripcion})
+        sql = "INSERT INTO inversiones (fecha, monto, descripcion, sucursal_id) VALUES (:fecha, :monto, :descripcion, :sucursal_id)"
+        execute(sql, {"fecha": fecha, "monto": monto, "descripcion": descripcion, "sucursal_id": sucursal_id})
         
         return jsonify({"msg": "Inversión agregada correctamente"}), 201
     except Exception as e:
