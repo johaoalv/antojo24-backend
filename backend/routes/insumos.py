@@ -7,7 +7,13 @@ insumos_bp = Blueprint("insumos", __name__)
 @insumos_bp.route("/api/insumos", methods=["GET"])
 def get_insumos():
     try:
-        insumos = fetch_all("SELECT * FROM insumos ORDER BY nombre ASC")
+        s_id_filter = request.args.get("sucursal_id")
+        is_global = not s_id_filter or s_id_filter == "global"
+
+        where_clause = "" if is_global else "WHERE sucursal_id = :s_id"
+        params = {} if is_global else {"s_id": s_id_filter}
+
+        insumos = fetch_all(f"SELECT * FROM insumos {where_clause} ORDER BY nombre ASC", params)
         return jsonify(insumos), 200
     except Exception as e:
         current_app.logger.error(f"Error al obtener insumos: {e}")
@@ -18,15 +24,16 @@ def add_insumo():
     data = request.json
     try:
         sql = """
-            INSERT INTO insumos (nombre, stock, costo_unidad, unidad_medida)
-            VALUES (:nombre, :stock, :costo, :unidad)
+            INSERT INTO insumos (nombre, stock, costo_unidad, unidad_medida, sucursal_id)
+            VALUES (:nombre, :stock, :costo, :unidad, :sucursal_id)
             RETURNING *
         """
         params = {
             "nombre": data["nombre"].lower(),
             "stock": data.get("stock", 0),
             "costo": data.get("costo_unidad", 0),
-            "unidad": data.get("unidad_medida", "unidad")
+            "unidad": data.get("unidad_medida", "unidad"),
+            "sucursal_id": data.get("sucursal_id")
         }
         nuevo = fetch_one(sql, params)
         return jsonify(nuevo), 201
@@ -40,7 +47,7 @@ def update_insumo(insumo_id):
     try:
         sql = """
             UPDATE insumos 
-            SET stock = :stock, costo_unidad = :costo, unidad_medida = :unidad, nombre = :nombre
+            SET stock = :stock, costo_unidad = :costo, unidad_medida = :unidad, nombre = :nombre, sucursal_id = :sucursal_id
             WHERE id = :id
             RETURNING *
         """
@@ -49,7 +56,8 @@ def update_insumo(insumo_id):
             "nombre": data["nombre"].lower(),
             "stock": data["stock"],
             "costo": data["costo_unidad"],
-            "unidad": data["unidad_medida"]
+            "unidad": data["unidad_medida"],
+            "sucursal_id": data.get("sucursal_id")
         }
         actualizado = fetch_one(sql, params)
         if not actualizado:
