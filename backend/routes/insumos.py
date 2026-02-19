@@ -30,8 +30,8 @@ def add_insumo():
         """
         params = {
             "nombre": data["nombre"].lower(),
-            "stock": data.get("stock", 0),
-            "costo": data.get("costo_unidad", 0),
+            "stock": float(data.get("stock", 0)),
+            "costo": float(data.get("costo_unidad", 0)),
             "unidad": data.get("unidad_medida", "unidad"),
             "sucursal_id": data.get("sucursal_id")
         }
