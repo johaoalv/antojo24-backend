@@ -99,11 +99,22 @@ def get_dashboard():
                 "total_cierre": cierres.get(dia, 0.0)
             })
 
+        # 6. Mermas (pérdidas de inventario)
+        sql_merma = f"""
+            SELECT COALESCE(SUM(m.cantidad * i.costo_unidad), 0) as total
+            FROM mermas m
+            JOIN insumos i ON m.insumo_id = i.id
+            {("WHERE m.sucursal_id = :s_id" if not is_global else "")}
+        """
+        res_merma = fetch_one(sql_merma, params)
+        total_merma = to_number(res_merma.get("total", 0)) if res_merma else 0.0
+
         return jsonify({
             "nombre_sucursal": nombre_sucursal,
             "total_ventas": round(total_ventas, 2),
             "total_invertido": round(total_invertido, 2),
-            "ganancia_bruta": round(total_ventas - total_invertido, 2),
+            "total_merma": round(total_merma, 2),
+            "ganancia_bruta": round(total_ventas - total_invertido - total_merma, 2),
             "historial": historial_completo,
             "por_tienda": desglose_tiendas
         }), 200
