@@ -47,6 +47,28 @@ def add_ingrediente():
         current_app.logger.error(f"Error al añadir ingrediente: {e}")
         return jsonify({"error": str(e)}), 500
 
+@recetas_bp.route("/api/recetas/bulk", methods=["POST"])
+def add_receta_bulk():
+    data = request.json
+    try:
+        producto = data["producto"].lower()
+        ingredientes = data["ingredientes"] # Lista de {insumo_id, cantidad_requerida}
+        
+        # Primero eliminamos ingredientes previos si existieran para este producto (opcional, pero util para sobreescribir)
+        # execute("DELETE FROM recetas WHERE LOWER(producto) = :prod", {"prod": producto})
+        
+        for ing in ingredientes:
+            sql = """
+                INSERT INTO recetas (producto, insumo_id, cantidad_requerida)
+                VALUES (:prod, :insumo, :cant)
+            """
+            execute(sql, {"prod": producto, "insumo": ing["insumo_id"], "cant": ing["cantidad_requerida"]})
+            
+        return jsonify({"message": f"Receta para {producto} creada con {len(ingredientes)} ingredientes"}), 201
+    except Exception as e:
+        current_app.logger.error(f"Error al crear receta bulk: {e}")
+        return jsonify({"error": str(e)}), 500
+
 @recetas_bp.route("/api/recetas/<int:id>", methods=["PUT"])
 def update_ingrediente(id):
     data = request.json
