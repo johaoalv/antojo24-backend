@@ -136,6 +136,74 @@ def pedido():
         return jsonify({"error": "Error interno al procesar el pedido"}), 500
 
 
+@pedido_bp.route("/api/pedido/<pedido_id>", methods=["DELETE"])
+def eliminar_pedido(pedido_id):
+    current_app.logger.info(f"🗑️ Solicitud para eliminar pedido: {pedido_id}")
+    try:
+        restored_items = []
+        with engine.begin() as conn:
+            # 1. Obtener los productos del pedido para saber qué devolver al inventario
+            sql_productos = "SELECT producto, cantidad FROM productos_pedido WHERE pedido_id = :pedido_id"
+            items = conn.execute(text(sql_productos), {"pedido_id": pedido_id}).mappings().all()
+
+            if not items:
+                # Si no hay productos en productos_pedido, verificamos si existe en pedidos
+                sql_check = "SELECT 1 FROM pedidos WHERE pedido_id = :pedido_id"
+                exists = conn.execute(text(sql_check), {"pedido_id": pedido_id}).first()
+                if not exists:
+                    return jsonify({"error": "Pedido no encontrado"}), 404
+
+            # 2. Revertir el stock para cada producto
+            for item in items:
+                producto_nombre = item["producto"].lower()
+                cantidad_vendida = float(item["cantidad"])
+
+                # Obtener la receta para este producto con el nombre del insumo
+                sql_receta = """
+                    SELECT r.insumo_id, i.nombre as insumo_nombre, r.cantidad_requerida
+                    FROM recetas r
+                    JOIN insumos i ON r.insumo_id = i.id
+                    WHERE LOWER(r.producto) = :producto
+                """
+                ingredientes = conn.execute(text(sql_receta), {"producto": producto_nombre}).mappings().all()
+
+                for ing in ingredientes:
+                    total_a_devolver = float(ing["cantidad_requerida"]) * cantidad_vendida
+                    
+                    sql_update_stock = """
+                        UPDATE insumos 
+                        SET stock = stock + :cantidad
+                        WHERE id = :insumo_id
+                    """
+                    conn.execute(text(sql_update_stock), {
+                        "cantidad": total_a_devolver,
+                        "insumo_id": ing["insumo_id"]
+                    })
+                    
+                    restored_items.append({
+                        "insumo": ing["insumo_nombre"],
+                        "cantidad": total_a_devolver,
+                        "producto": producto_nombre
+                    })
+                    current_app.logger.debug(f"Restaurado {total_a_devolver} del insumo {ing['insumo_nombre']} por {producto_nombre}")
+
+            # 3. Eliminar registros de las tablas
+            conn.execute(text("DELETE FROM productos_pedido WHERE pedido_id = :pedido_id"), {"pedido_id": pedido_id})
+            conn.execute(text("DELETE FROM pedidos WHERE pedido_id = :pedido_id"), {"pedido_id": pedido_id})
+
+            current_app.logger.info(f"✅ Pedido {pedido_id} eliminado y stock restaurado.")
+
+        emitir_dashboard_update()
+        return jsonify({
+            "message": "Pedido eliminado y stock restaurado correctamente",
+            "restored_items": restored_items
+        }), 200
+
+    except Exception as e:
+        current_app.logger.exception(f"Error al eliminar pedido {pedido_id}: {str(e)}")
+        return jsonify({"error": "Error interno al eliminar el pedido"}), 500
+
+
 @pedido_bp.route("/api/pedido", methods=["OPTIONS"])
 def handle_options():
     return '', 200
