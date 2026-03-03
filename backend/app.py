@@ -36,7 +36,8 @@ from routes.dashboard import dashboard_bp
 from routes.print import print_bp
 from routes.cierre import cierre_bp
 from routes.insumos import insumos_bp
-from routes.inversiones import inversiones_bp
+from routes.gastos import gastos_bp
+from routes.inyecciones import inyecciones_bp
 from routes.produccion import produccion_bp
 from routes.costeo import costeo_bp
 from routes.recetas import recetas_bp
@@ -48,7 +49,8 @@ app.register_blueprint(dashboard_bp)
 app.register_blueprint(print_bp)
 app.register_blueprint(cierre_bp)
 app.register_blueprint(insumos_bp)
-app.register_blueprint(inversiones_bp)
+app.register_blueprint(gastos_bp)
+app.register_blueprint(inyecciones_bp)
 app.register_blueprint(produccion_bp)
 app.register_blueprint(costeo_bp)
 app.register_blueprint(recetas_bp)
@@ -93,4 +95,6 @@ def handle_connect():
 
 # 🔁 Reemplazamos app.run por socketio.run
 if __name__ == "__main__":
-    socketio.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
+    port = int(os.getenv("PORT", 5000))
+    # Activamos debug solo en modo local para recarga automática
+    socketio.run(app, host="0.0.0.0", port=port, debug=(port == 5000))
