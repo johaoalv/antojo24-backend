@@ -24,7 +24,7 @@ def get_dashboard():
         s_id_filter = request.args.get("sucursal_id")
         is_global = not s_id_filter or s_id_filter == "global"
 
-        # 1. Obtener todas las tiendas (para el desglose o selector)
+        # 1. Obtener todas las tiendas
         sql_tiendas = "SELECT nombre_tienda, sucursal_id FROM tiendas_acceso"
         tiendas = fetch_all(sql_tiendas)
         
@@ -34,89 +34,116 @@ def get_dashboard():
             if tienda_actual:
                 nombre_sucursal = tienda_actual["nombre_tienda"]
 
-        # 2. Totales (Filtrados si no es global)
+        # 2. Cláusula de filtrado
         where_clause = "" if is_global else "WHERE sucursal_id = :s_id"
         params = {} if is_global else {"s_id": s_id_filter}
 
-        sql_ventas = f"SELECT SUM(total_pedido) as total FROM pedidos {where_clause}"
-        res_ventas = fetch_one(sql_ventas, params)
-        total_ventas = to_number(res_ventas.get("total", 0)) if res_ventas else 0.0
+        # --- CÁLCULOS DEL MES ACTUAL ---
+        hoy = date.today()
+        inicio_mes = hoy.replace(day=1).isoformat()
+        
+        where_mes = f"WHERE fecha >= :inicio_mes" + (" AND sucursal_id = :s_id" if not is_global else "")
+        params_mes = {"inicio_mes": inicio_mes}
+        if not is_global:
+            params_mes["s_id"] = s_id_filter
 
-        sql_inversion = f"SELECT SUM(monto) as total FROM inversiones {where_clause}"
-        res_inversion = fetch_one(sql_inversion, params)
-        total_invertido = to_number(res_inversion.get("total", 0)) if res_inversion else 0.0
+        # Ventas del mes
+        sql_ventas_mes = f"SELECT SUM(total_pedido) as total FROM pedidos {where_mes}"
+        res_ventas_mes = fetch_one(sql_ventas_mes, params_mes)
+        ventas_mes = to_number(res_ventas_mes.get("total", 0))
 
-        # 3. Datos agrupados por sucursal (para el desglose interno si es global)
+        # Gastos del mes (Operativos: todo menos 'inversion')
+        sql_gastos_op = f"SELECT SUM(monto) as total FROM gastos {where_mes} AND categoria != 'inversion'"
+        res_gastos_op = fetch_one(sql_gastos_op, params_mes)
+        gastos_operativos = to_number(res_gastos_op.get("total", 0))
+
+        # Inversiones del mes (Solo categoria 'inversion')
+        sql_gastos_inv = f"SELECT SUM(monto) as total FROM gastos {where_mes} AND categoria = 'inversion'"
+        res_gastos_inv = fetch_one(sql_gastos_inv, params_mes)
+        inversiones_mes = to_number(res_gastos_inv.get("total", 0))
+
+        # Mermas del mes
+        sql_merma_mes = f"""
+            SELECT COALESCE(SUM(m.cantidad * i.costo_unidad), 0) as total
+            FROM mermas m
+            JOIN insumos i ON m.insumo_id = i.id
+            {where_mes.replace('fecha', 'm.fecha').replace('sucursal_id', 'm.sucursal_id')}
+        """
+        res_merma_mes = fetch_one(sql_merma_mes, params_mes)
+        mermas_mes = to_number(res_merma_mes.get("total", 0))
+
+        # Inyecciones del mes
+        sql_iny_mes = f"SELECT SUM(monto) as total FROM inyecciones {where_mes}"
+        res_iny_mes = fetch_one(sql_iny_mes, params_mes)
+        inyecciones_mes = to_number(res_iny_mes.get("total", 0))
+
+        # Ganancia Neta = Ventas - Gastos Operativos - Mermas
+        ganancia_neta_mes = ventas_mes - gastos_operativos - mermas_mes
+
+        # --- HISTORIAL MENSUAL ---
+        sql_historial_mes = f"""
+            SELECT 
+                SUBSTR(fecha::text, 1, 7) as mes,
+                SUM(total_pedido) as total_ventas
+            FROM pedidos
+            {where_clause}
+            GROUP BY mes
+            ORDER BY mes DESC
+            LIMIT 12
+        """
+        historial_mensual = fetch_all(sql_historial_mes, params)
+
+        # --- DESGLOSE POR TIENDA (Solo si es global) ---
         desglose_tiendas = []
         if is_global:
             sql_v_suc = "SELECT sucursal_id, SUM(total_pedido) as total FROM pedidos GROUP BY sucursal_id"
             ventas_sucursal = {v["sucursal_id"]: to_number(v["total"]) for v in fetch_all(sql_v_suc)}
 
-            sql_i_suc = "SELECT sucursal_id, SUM(monto) as total FROM inversiones GROUP BY sucursal_id"
-            inversiones_sucursal = {i["sucursal_id"]: to_number(i["total"]) for i in fetch_all(sql_i_suc)}
+            sql_g_suc = "SELECT sucursal_id, SUM(monto) as total FROM gastos GROUP BY sucursal_id"
+            gastos_sucursal = {i["sucursal_id"]: to_number(i["total"]) for i in fetch_all(sql_g_suc)}
 
             for t in tiendas:
                 sid = t["sucursal_id"]
                 v_t = ventas_sucursal.get(sid, 0.0)
-                i_t = inversiones_sucursal.get(sid, 0.0)
+                g_t = gastos_sucursal.get(sid, 0.0)
                 desglose_tiendas.append({
                     "nombre": t["nombre_tienda"],
                     "sucursal_id": sid,
                     "total_ventas": round(v_t, 2),
-                    "total_invertido": round(i_t, 2),
-                    "ganancia_bruta": round(v_t - i_t, 2)
+                    "total_gastos": round(g_t, 2),
+                    "balance": round(v_t - g_t, 2)
                 })
 
-        # 4. Historial de Ventas Diario (Filtrado si no es global)
-        sql_historial = f"""
+        # --- HISTORIAL DIARIO (Mantener para compatibilidad actual) ---
+        sql_historial_diario = f"""
             SELECT 
                 SUBSTR(fecha::text, 1, 10) as dia,
-                SUM(total_pedido) as total_ventas,
-                SUM(CASE WHEN lower(metodo_pago) = 'efectivo' THEN total_pedido ELSE 0 END) as efectivo,
-                SUM(CASE WHEN lower(metodo_pago) = 'tarjeta' THEN total_pedido ELSE 0 END) as tarjeta,
-                SUM(CASE WHEN lower(metodo_pago) IN ('yappy', 'transferencia') THEN total_pedido ELSE 0 END) as yappy
+                SUM(total_pedido) as total_ventas
             FROM pedidos
             {where_clause}
             GROUP BY dia
             ORDER BY dia DESC
-            LIMIT 30
+            LIMIT 15
         """
-        historial_raw = fetch_all(sql_historial, params)
-
-        # 5. Cierres de caja
-        sql_cierres = f"SELECT fecha_cierre::text as dia, SUM(total_real) as total_real FROM cierres_caja {where_clause} GROUP BY dia"
-        cierres = {fecha_solo(c["dia"]): to_number(c["total_real"]) for c in fetch_all(sql_cierres, params)}
-
-        historial_completo = []
-        for v in historial_raw:
-            dia = v["dia"]
-            historial_completo.append({
-                "fecha": dia,
-                "total_ventas": to_number(v["total_ventas"]),
-                "efectivo": to_number(v["efectivo"]),
-                "tarjeta": to_number(v["tarjeta"]),
-                "yappy": to_number(v["yappy"]),
-                "total_cierre": cierres.get(dia, 0.0)
-            })
-
-        # 6. Mermas (pérdidas de inventario)
-        sql_merma = f"""
-            SELECT COALESCE(SUM(m.cantidad * i.costo_unidad), 0) as total
-            FROM mermas m
-            JOIN insumos i ON m.insumo_id = i.id
-            {("WHERE m.sucursal_id = :s_id" if not is_global else "")}
-        """
-        res_merma = fetch_one(sql_merma, params)
-        total_merma = to_number(res_merma.get("total", 0)) if res_merma else 0.0
+        historial_diario = fetch_all(sql_historial_diario, params)
 
         return jsonify({
             "nombre_sucursal": nombre_sucursal,
-            "total_ventas": round(total_ventas, 2),
-            "total_invertido": round(total_invertido, 2),
-            "total_merma": round(total_merma, 2),
-            "ganancia_bruta": round(total_ventas - total_invertido - total_merma, 2),
-            "historial": historial_completo,
-            "por_tienda": desglose_tiendas
+            "mes_actual": {
+                "ventas": round(ventas_mes, 2),
+                "gastos_operativos": round(gastos_operativos, 2),
+                "inversiones": round(inversiones_mes, 2),
+                "mermas": round(mermas_mes, 2),
+                "inyecciones": round(inyecciones_mes, 2),
+                "ganancia_neta": round(ganancia_neta_mes, 2)
+            },
+            "historial_mensual": historial_mensual,
+            "historial_diario": historial_diario,
+            "por_tienda": desglose_tiendas,
+            "total_ventas": round(ventas_mes, 2),
+            "total_invertido": round(gastos_operativos + inversiones_mes, 2),
+            "total_merma": round(mermas_mes, 2),
+            "ganancia_bruta": round(ganancia_neta_mes, 2)
         }), 200
 
     except Exception as e:
