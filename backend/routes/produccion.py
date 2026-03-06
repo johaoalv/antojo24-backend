@@ -54,11 +54,11 @@ def fabricar_insumo():
         if not receta:
             return jsonify({"error": "No se encontró la receta para este insumo"}), 404
 
-        # 2. Verificar stock de ingredientes
+        # 2. Verificar stock de ingredientes (Informativo en log, no bloquea)
         for item in receta:
             requerido = float(item["cantidad_proporcional"]) * num_tandas
             if float(item["stock"]) < requerido:
-                return jsonify({"error": f"Stock insuficiente de {item['nombre']}. Necesitas {requerido} y tienes {item['stock']}"}), 400
+                current_app.logger.warning(f"⚠️ Stock insuficiente de {item['nombre']} para producción. Necesitas {requerido} y tienes {item['stock']}. Se procede igualmente.")
 
         # 3. Procesar: Descontar base y sumar al compuesto
         costo_total_lote = 0
