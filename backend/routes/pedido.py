@@ -64,18 +64,15 @@ def pedido():
                         }
                     insumos_requeridos[i_id]["necesario"] += float(ing["cantidad_requerida"] or 0) * cantidad_vendida
 
-        # Verificar disponibilidad
+        # Verificar disponibilidad (Solo para log de advertencia, no bloquea)
         faltantes = []
         for info in insumos_requeridos.values():
             if info["stock"] < info["necesario"]:
                 faltantes.append(f"{info['nombre']} (disponible: {info['stock']}, requerido: {info['necesario']})")
-        
+
         if faltantes:
-            current_app.logger.warning(f"⚠️ Stock insuficiente para el pedido: {faltantes}")
-            return jsonify({
-                "error": "Stock insuficiente",
-                "detalles": "Faltan ingredientes: " + ", ".join(faltantes)
-            }), 400
+            current_app.logger.warning(f"⚠️ Stock insuficiente para el pedido: {faltantes}. Se procede con el descuento igualmente.")
+            # Ya no bloqueamos la venta, el stock quedará negativo
 
         # Procesar el pedido en una transacción
         with engine.begin() as conn:

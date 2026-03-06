@@ -23,18 +23,15 @@ def get_insumos():
 def add_insumo():
     data = request.json
     try:
-        sql = """
-            INSERT INTO insumos (nombre, stock, costo_unidad, unidad_medida, sucursal_id)
-            VALUES (:nombre, :stock, :costo, :unidad, :sucursal_id)
-            RETURNING *
-        """
         params = {
             "nombre": data["nombre"].lower(),
             "stock": float(data.get("stock", 0)),
             "costo": float(data.get("costo_unidad", 0)),
             "unidad": data.get("unidad_medida", "unidad"),
-            "sucursal_id": data.get("sucursal_id")
+            "sucursal_id": data.get("sucursal_id"),
+            "porcion": data.get("porcion_estandar")
         }
+        sql = "INSERT INTO insumos (nombre, stock, costo_unidad, unidad_medida, sucursal_id, porcion_estandar) VALUES (:nombre, :stock, :costo, :unidad, :sucursal_id, :porcion) RETURNING *"
         nuevo = fetch_one(sql, params)
         return jsonify(nuevo), 201
     except Exception as e:
@@ -45,19 +42,15 @@ def add_insumo():
 def update_insumo(insumo_id):
     data = request.json
     try:
-        sql = """
-            UPDATE insumos 
-            SET stock = :stock, costo_unidad = :costo, unidad_medida = :unidad, nombre = :nombre, sucursal_id = :sucursal_id
-            WHERE id = :id
-            RETURNING *
-        """
+        sql = "UPDATE insumos SET stock = :stock, costo_unidad = :costo, unidad_medida = :unidad, nombre = :nombre, sucursal_id = :sucursal_id, porcion_estandar = :porcion WHERE id = :id RETURNING *"
         params = {
             "id": insumo_id,
             "nombre": data["nombre"].lower(),
             "stock": data["stock"],
             "costo": data["costo_unidad"],
             "unidad": data["unidad_medida"],
-            "sucursal_id": data.get("sucursal_id")
+            "sucursal_id": data.get("sucursal_id"),
+            "porcion": data.get("porcion_estandar")
         }
         actualizado = fetch_one(sql, params)
         if not actualizado:

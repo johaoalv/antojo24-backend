@@ -16,7 +16,8 @@ def get_costeo_productos():
                     'cantidad', r.cantidad_requerida,
                     'unidad', i.unidad_medida,
                     'costo_unitario', i.costo_unidad,
-                    'subtotal', r.cantidad_requerida * i.costo_unidad
+                    'subtotal', r.cantidad_requerida * i.costo_unidad,
+                    'stock', i.stock
                 )) as ingredientes
             FROM recetas r
             JOIN insumos i ON r.insumo_id = i.id
