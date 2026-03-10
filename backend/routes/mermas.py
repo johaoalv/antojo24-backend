@@ -101,3 +101,31 @@ def registrar_merma():
     except Exception as e:
         current_app.logger.error(f"Error al registrar merma: {e}")
         return jsonify({"error": str(e)}), 500
+@mermas_bp.route("/api/mermas/<int:merma_id>", methods=["DELETE"])
+def eliminar_merma(merma_id):
+    try:
+        from sqlalchemy import text
+        from db import engine
+        with engine.begin() as conn:
+            # 1. Obtener datos de la merma antes de borrarla
+            merma = conn.execute(
+                text("SELECT insumo_id, cantidad FROM mermas WHERE id = :id"),
+                {"id": merma_id}
+            ).fetchone()
+
+            if not merma:
+                return jsonify({"error": "Merma no encontrada"}), 404
+
+            # 2. Devolver el stock al insumo
+            conn.execute(
+                text("UPDATE insumos SET stock = stock + :cant WHERE id = :id"),
+                {"cant": float(merma[1]), "id": merma[0]}
+            )
+
+            # 3. Eliminar el registro de merma
+            conn.execute(text("DELETE FROM mermas WHERE id = :id"), {"id": merma_id})
+
+        return jsonify({"message": "Merma eliminada y stock restablecido"}), 200
+    except Exception as e:
+        current_app.logger.error(f"Error al eliminar merma: {e}")
+        return jsonify({"error": str(e)}), 500
