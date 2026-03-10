@@ -125,7 +125,7 @@ def eliminar_merma(merma_id):
             # 3. Eliminar el registro de merma
             conn.execute(text("DELETE FROM mermas WHERE id = :id"), {"id": merma_id})
 
-        return jsonify({"message": "Merma eliminada y stock restaurado"}), 200
+        return jsonify({"message": "Merma eliminada y stock restablecido"}), 200
     except Exception as e:
         current_app.logger.error(f"Error al eliminar merma: {e}")
         return jsonify({"error": str(e)}), 500
