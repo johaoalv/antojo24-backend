@@ -3,10 +3,14 @@ from datetime import date, timedelta
 import os
 from db import fetch_all, fetch_one
 
+import math
+
 def to_number(v):
     if v is None: return 0.0
     try:
-        return float(v)
+        f = float(v)
+        if math.isnan(f): return 0.0
+        return f
     except Exception:
         return 0.0
 
@@ -91,7 +95,10 @@ def get_dashboard():
             ORDER BY mes DESC
             LIMIT 12
         """
-        historial_mensual = fetch_all(sql_historial_mes, params)
+        historial_mensual = [
+            {**h, "total_ventas": to_number(h["total_ventas"])}
+            for h in fetch_all(sql_historial_mes, params)
+        ]
 
         # --- DESGLOSE POR TIENDA (Solo si es global) ---
         desglose_tiendas = []
@@ -123,9 +130,12 @@ def get_dashboard():
             {where_clause}
             GROUP BY dia
             ORDER BY dia DESC
-            LIMIT 15
+            LIMIT 100
         """
-        historial_diario = fetch_all(sql_historial_diario, params)
+        historial_diario = [
+            {**d, "total_ventas": to_number(d["total_ventas"])}
+            for d in fetch_all(sql_historial_diario, params)
+        ]
 
         return jsonify({
             "nombre_sucursal": nombre_sucursal,
