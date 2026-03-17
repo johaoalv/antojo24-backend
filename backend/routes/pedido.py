@@ -47,22 +47,50 @@ def pedido():
                 if cantidad_vendida <= 0:
                     continue
 
-                sql_receta = """
-                    SELECT i.id, i.nombre, i.stock, r.cantidad_requerida
-                    FROM recetas r
-                    JOIN insumos i ON r.insumo_id = i.id
-                    WHERE LOWER(r.producto) = :producto
-                """
-                ingredientes = conn.execute(text(sql_receta), {"producto": producto_nombre}).mappings().all()
-                for ing in ingredientes:
-                    i_id = ing["id"]
-                    if i_id not in insumos_requeridos:
-                        insumos_requeridos[i_id] = {
-                            "nombre": ing["nombre"],
-                            "stock": float(ing["stock"] or 0),
-                            "necesario": 0.0
-                        }
-                    insumos_requeridos[i_id]["necesario"] += float(ing["cantidad_requerida"] or 0) * cantidad_vendida
+                # NUEVO CÓDIGO PARA DESCOMPONER COMBOS EN PRODUCTOS BASE
+                sql_prod = "SELECT es_combo, combo_items FROM productos WHERE LOWER(nombre) = :producto"
+                prod = conn.execute(text(sql_prod), {"producto": producto_nombre}).mappings().first()
+                
+                productos_a_procesar = []
+                if prod and prod["es_combo"] and prod["combo_items"]:
+                    import json
+                    try:
+                        items_combo = prod["combo_items"] if isinstance(prod["combo_items"], list) else json.loads(prod["combo_items"])
+                        for ci in items_combo:
+                            base_prod = conn.execute(text("SELECT nombre FROM productos WHERE id = :id"), {"id": ci["id"]}).mappings().first()
+                            if base_prod:
+                                productos_a_procesar.append({
+                                    "nombre": base_prod["nombre"].lower(),
+                                    "cantidad": float(ci.get("cantidad", 1)) * cantidad_vendida
+                                })
+                    except Exception as e:
+                        current_app.logger.error(f"Error procesando combo_items: {e}")
+                else:
+                    # Si no es combo, lo procesamos como siempre
+                    productos_a_procesar.append({
+                        "nombre": producto_nombre,
+                        "cantidad": cantidad_vendida
+                    })
+
+                # Ahora iterar sobre productos_a_procesar para buscar sus recetas
+                for bp in productos_a_procesar:
+                    sql_receta = """
+                        SELECT i.id, i.nombre, i.stock, r.cantidad_requerida
+                        FROM recetas r
+                        JOIN insumos i ON r.insumo_id = i.id
+                        WHERE LOWER(r.producto) = :producto
+                    """
+                    ingredientes = conn.execute(text(sql_receta), {"producto": bp["nombre"]}).mappings().all()
+                    
+                    for ing in ingredientes:
+                        i_id = ing["id"]
+                        if i_id not in insumos_requeridos:
+                            insumos_requeridos[i_id] = {
+                                "nombre": ing["nombre"],
+                                "stock": float(ing["stock"] or 0),
+                                "necesario": 0.0
+                            }
+                        insumos_requeridos[i_id]["necesario"] += float(ing["cantidad_requerida"] or 0) * bp["cantidad"]
 
         # Verificar disponibilidad (Solo para log de advertencia, no bloquea)
         faltantes = []
@@ -155,34 +183,59 @@ def eliminar_pedido(pedido_id):
                 producto_nombre = item["producto"].lower()
                 cantidad_vendida = float(item["cantidad"])
 
-                # Obtener la receta para este producto con el nombre del insumo
-                sql_receta = """
-                    SELECT r.insumo_id, i.nombre as insumo_nombre, r.cantidad_requerida
-                    FROM recetas r
-                    JOIN insumos i ON r.insumo_id = i.id
-                    WHERE LOWER(r.producto) = :producto
-                """
-                ingredientes = conn.execute(text(sql_receta), {"producto": producto_nombre}).mappings().all()
+                # Obtener si el producto es combo
+                sql_prod = "SELECT es_combo, combo_items FROM productos WHERE LOWER(nombre) = :producto"
+                prod = conn.execute(text(sql_prod), {"producto": producto_nombre}).mappings().first()
+                
+                productos_a_procesar = []
+                if prod and prod["es_combo"] and prod["combo_items"]:
+                    import json
+                    try:
+                        items_combo = prod["combo_items"] if isinstance(prod["combo_items"], list) else json.loads(prod["combo_items"])
+                        for ci in items_combo:
+                            base_prod = conn.execute(text("SELECT nombre FROM productos WHERE id = :id"), {"id": ci["id"]}).mappings().first()
+                            if base_prod:
+                                productos_a_procesar.append({
+                                    "nombre": base_prod["nombre"].lower(),
+                                    "cantidad": float(ci.get("cantidad", 1)) * cantidad_vendida
+                                })
+                    except Exception as e:
+                        pass
+                else:
+                    productos_a_procesar.append({
+                        "nombre": producto_nombre,
+                        "cantidad": cantidad_vendida
+                    })
 
-                for ing in ingredientes:
-                    total_a_devolver = float(ing["cantidad_requerida"]) * cantidad_vendida
-                    
-                    sql_update_stock = """
-                        UPDATE insumos 
-                        SET stock = stock + :cantidad
-                        WHERE id = :insumo_id
+                for bp in productos_a_procesar:
+                    # Obtener la receta para este producto con el nombre del insumo
+                    sql_receta = """
+                        SELECT r.insumo_id, i.nombre as insumo_nombre, r.cantidad_requerida
+                        FROM recetas r
+                        JOIN insumos i ON r.insumo_id = i.id
+                        WHERE LOWER(r.producto) = :producto
                     """
-                    conn.execute(text(sql_update_stock), {
-                        "cantidad": total_a_devolver,
-                        "insumo_id": ing["insumo_id"]
-                    })
-                    
-                    restored_items.append({
-                        "insumo": ing["insumo_nombre"],
-                        "cantidad": total_a_devolver,
-                        "producto": producto_nombre
-                    })
-                    current_app.logger.debug(f"Restaurado {total_a_devolver} del insumo {ing['insumo_nombre']} por {producto_nombre}")
+                    ingredientes = conn.execute(text(sql_receta), {"producto": bp["nombre"]}).mappings().all()
+
+                    for ing in ingredientes:
+                        total_a_devolver = float(ing["cantidad_requerida"]) * bp["cantidad"]
+                        
+                        sql_update_stock = """
+                            UPDATE insumos 
+                            SET stock = stock + :cantidad
+                            WHERE id = :insumo_id
+                        """
+                        conn.execute(text(sql_update_stock), {
+                            "cantidad": total_a_devolver,
+                            "insumo_id": ing["insumo_id"]
+                        })
+                        
+                        restored_items.append({
+                            "insumo": ing["insumo_nombre"],
+                            "cantidad": total_a_devolver,
+                            "producto": bp["nombre"]
+                        })
+                        current_app.logger.debug(f"Restaurado {total_a_devolver} del insumo {ing['insumo_nombre']} por {bp['nombre']}")
 
             # 3. Eliminar registros de las tablas
             conn.execute(text("DELETE FROM productos_pedido WHERE pedido_id = :pedido_id"), {"pedido_id": pedido_id})
