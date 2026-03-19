@@ -52,21 +52,32 @@ def get_dashboard():
             params_mes["s_id"] = s_id_filter
 
         # Ventas del mes
-        sql_ventas_mes = f"SELECT SUM(total_pedido) as total FROM pedidos {where_mes}"
+        sql_ventas_mes = f"SELECT SUM(total_pedido) as total, SUM(costo_total) as cogs FROM pedidos {where_mes}"
         res_ventas_mes = fetch_one(sql_ventas_mes, params_mes)
         ventas_mes = to_number(res_ventas_mes.get("total", 0))
+        cogs_mes = to_number(res_ventas_mes.get("cogs", 0))
 
-        # Gastos del mes (Operativos: todo menos 'inversion')
-        sql_gastos_op = f"SELECT SUM(monto) as total FROM gastos {where_mes} AND categoria != 'inversion'"
+        # Gastos Operativos (salida / operativo)
+        sql_gastos_op = f"SELECT SUM(monto) as total FROM movimientos_caja {where_mes} AND tipo = 'salida' AND categoria = 'operativo'"
         res_gastos_op = fetch_one(sql_gastos_op, params_mes)
         gastos_operativos = to_number(res_gastos_op.get("total", 0))
 
-        # Inversiones del mes (Solo categoria 'inversion')
-        sql_gastos_inv = f"SELECT SUM(monto) as total FROM gastos {where_mes} AND categoria = 'inversion'"
+        # Compras de Inventario (salida / inventario)
+        sql_gastos_inv_compras = f"SELECT SUM(monto) as total FROM movimientos_caja {where_mes} AND tipo = 'salida' AND categoria = 'inventario'"
+        res_gastos_inv_compras = fetch_one(sql_gastos_inv_compras, params_mes)
+        compras_inventario = to_number(res_gastos_inv_compras.get("total", 0))
+
+        # Inversiones (salida / inversion) - Nota: a veces inversion es entrada, pero aqui buscamos el gasto de inversion si aplica
+        sql_gastos_inv = f"SELECT SUM(monto) as total FROM movimientos_caja {where_mes} AND tipo = 'salida' AND categoria = 'inversion'"
         res_gastos_inv = fetch_one(sql_gastos_inv, params_mes)
         inversiones_mes = to_number(res_gastos_inv.get("total", 0))
 
-        # Mermas del mes
+        # Inyecciones (entrada / inversion)
+        sql_iny_mes = f"SELECT SUM(monto) as total FROM movimientos_caja {where_mes} AND tipo = 'entrada' AND categoria = 'inversion'"
+        res_iny_mes = fetch_one(sql_iny_mes, params_mes)
+        inyecciones_mes = to_number(res_iny_mes.get("total", 0))
+
+        # Mermas del mes (estas no son movimientos de caja físicos, son pérdida de valor de inventario)
         sql_merma_mes = f"""
             SELECT COALESCE(SUM(m.cantidad * i.costo_unidad), 0) as total
             FROM mermas m
@@ -76,13 +87,45 @@ def get_dashboard():
         res_merma_mes = fetch_one(sql_merma_mes, params_mes)
         mermas_mes = to_number(res_merma_mes.get("total", 0))
 
-        # Inyecciones del mes
-        sql_iny_mes = f"SELECT SUM(monto) as total FROM inyecciones {where_mes}"
-        res_iny_mes = fetch_one(sql_iny_mes, params_mes)
-        inyecciones_mes = to_number(res_iny_mes.get("total", 0))
+        # --- CALCULO DE UTILIDAD ACUMULADA (HISTÓRICA) ---
+        where_global = "" if is_global else "WHERE sucursal_id = :s_id"
+        params_global = {} if is_global else {"s_id": s_id_filter}
 
-        # Ganancia Neta = Ventas - Gastos Operativos - Mermas
-        ganancia_neta_mes = ventas_mes - gastos_operativos - mermas_mes
+        # 1. Ventas y COGS Histórico
+        sql_hist_ventas = f"SELECT SUM(total_pedido) as total, SUM(costo_total) as cogs FROM pedidos {where_global}"
+        res_hist_ventas = fetch_one(sql_hist_ventas, params_global)
+        hist_ventas = to_number(res_hist_ventas.get("total", 0))
+        hist_cogs = to_number(res_hist_ventas.get("cogs", 0))
+
+        # 2. Gastos Operativos Históricos
+        sql_hist_gastos = f"SELECT SUM(monto) as total FROM movimientos_caja {where_global} {'AND' if not is_global else 'WHERE'} tipo = 'salida' AND categoria = 'operativo'"
+        res_hist_gastos = fetch_one(sql_hist_gastos, params_global)
+        hist_gastos_op = to_number(res_hist_gastos.get("total", 0))
+
+        # 3. Mermas Históricas
+        sql_hist_mermas = f"""
+            SELECT COALESCE(SUM(m.cantidad * i.costo_unidad), 0) as total
+            FROM mermas m
+            JOIN insumos i ON m.insumo_id = i.id
+            {where_global.replace('sucursal_id', 'm.sucursal_id')}
+        """
+        res_hist_mermas = fetch_one(sql_hist_mermas, params_global)
+        hist_mermas = to_number(res_hist_mermas.get("total", 0))
+
+        utilidad_acumulada_total = hist_ventas - hist_cogs - hist_gastos_op - hist_mermas
+
+        # Caja Real Acumulada (Toda la historia / Plata Real)
+        sql_caja_total = f"SELECT SUM(CASE WHEN tipo = 'entrada' THEN monto ELSE -monto END) as saldo FROM movimientos_caja {where_global}"
+        res_caja_total = fetch_one(sql_caja_total, params_global)
+        saldo_caja_total_historico = to_number(res_caja_total.get("saldo", 0))
+
+        # --- LOGICA FINANCIERA DEL MES (Ya existente) ---
+        ganancia_neta_mes = ventas_mes - cogs_mes - gastos_operativos - mermas_mes
+
+        # Caja del MES (Solo flujo del período actual)
+        sql_caja_mes = f"SELECT SUM(CASE WHEN tipo = 'entrada' THEN monto ELSE -monto END) as saldo FROM movimientos_caja {where_mes}"
+        res_caja_mes = fetch_one(sql_caja_mes, params_mes)
+        saldo_caja_mes = to_number(res_caja_mes.get("saldo", 0))
 
         # --- HISTORIAL MENSUAL ---
         sql_historial_mes = f"""
@@ -141,17 +184,22 @@ def get_dashboard():
             "nombre_sucursal": nombre_sucursal,
             "mes_actual": {
                 "ventas": round(ventas_mes, 2),
+                "cogs": round(cogs_mes, 2),
                 "gastos_operativos": round(gastos_operativos, 2),
+                "compras_inventario": round(compras_inventario, 2),
                 "inversiones": round(inversiones_mes, 2),
                 "mermas": round(mermas_mes, 2),
                 "inyecciones": round(inyecciones_mes, 2),
-                "ganancia_neta": round(ganancia_neta_mes, 2)
+                "ganancia_neta": round(ganancia_neta_mes, 2),
+                "saldo_caja": round(saldo_caja_total_historico, 2),
+                "saldo_caja_mes": round(saldo_caja_mes, 2),
+                "utilidad_acumulada": round(utilidad_acumulada_total, 2)
             },
             "historial_mensual": historial_mensual,
             "historial_diario": historial_diario,
             "por_tienda": desglose_tiendas,
             "total_ventas": round(ventas_mes, 2),
-            "total_invertido": round(gastos_operativos + inversiones_mes, 2),
+            "total_invertido": round(gastos_operativos + inversiones_mes + compras_inventario, 2),
             "total_merma": round(mermas_mes, 2),
             "ganancia_bruta": round(ganancia_neta_mes, 2)
         }), 200

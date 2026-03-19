@@ -43,6 +43,7 @@ from routes.costeo import costeo_bp
 from routes.recetas import recetas_bp
 from routes.mermas import mermas_bp
 from routes.productos import productos_bp
+from routes.finanzas import finanzas_bp
 
 app.register_blueprint(auth_bp)
 app.register_blueprint(pedido_bp)
@@ -57,6 +58,7 @@ app.register_blueprint(costeo_bp)
 app.register_blueprint(recetas_bp)
 app.register_blueprint(mermas_bp)
 app.register_blueprint(productos_bp)
+app.register_blueprint(finanzas_bp)
 
 @app.after_request
 def aplicar_cors_headers(response):

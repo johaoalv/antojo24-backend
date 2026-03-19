@@ -23,6 +23,7 @@ def get_inyecciones():
 
 @inyecciones_bp.route("/api/inyecciones", methods=["POST"])
 def add_inyeccion():
+    from db import engine, text
     try:
         data = request.get_json()
         monto = data.get("monto")
@@ -33,20 +34,42 @@ def add_inyeccion():
         if not monto:
             return jsonify({"error": "Monto es requerido"}), 400
 
-        sql = "INSERT INTO inyecciones (fecha, monto, descripcion, sucursal_id) VALUES (:fecha, :monto, :descripcion, :sucursal_id)"
-        execute(sql, {"fecha": fecha, "monto": monto, "descripcion": descripcion, "sucursal_id": sucursal_id})
+        with engine.begin() as conn:
+            # 1. Insertar en tabla original (inyecciones)
+            sql_iny = """
+                INSERT INTO inyecciones (fecha, monto, descripcion, sucursal_id) 
+                VALUES (:fecha, :monto, :descripcion, :sucursal_id)
+                RETURNING id
+            """
+            res = conn.execute(text(sql_iny), {"fecha": fecha, "monto": monto, "descripcion": descripcion, "sucursal_id": sucursal_id})
+            iny_id = res.fetchone()[0]
+
+            # 2. Insertar en movimientos_caja
+            sql_mov = """
+                INSERT INTO movimientos_caja (fecha, tipo, categoria, monto, descripcion, sucursal_id, referencia_id)
+                VALUES (:fecha, 'entrada', 'inversion', :monto, :descripcion, :sucursal_id, :referencia_id)
+            """
+            conn.execute(text(sql_mov), {
+                "fecha": fecha,
+                "monto": monto,
+                "descripcion": descripcion,
+                "sucursal_id": sucursal_id,
+                "referencia_id": str(iny_id)
+            })
         
-        return jsonify({"msg": "Inyección de capital registrada correctamente"}), 201
+        return jsonify({"msg": "Inyección de capital registrada en caja correctamente"}), 201
     except Exception as e:
         current_app.logger.exception("Error en add_inyeccion: %s", e)
         return jsonify({"error": "Error al registrar inyección"}), 500
 
 @inyecciones_bp.route("/api/inyecciones/<int:iny_id>", methods=["DELETE"])
 def delete_inyeccion(iny_id):
+    from db import engine, text
     try:
-        sql = "DELETE FROM inyecciones WHERE id = :id"
-        execute(sql, {"id": iny_id})
-        return jsonify({"msg": "Inyección eliminada correctamente"}), 200
+        with engine.begin() as conn:
+            conn.execute(text("DELETE FROM inyecciones WHERE id = :id"), {"id": iny_id})
+            conn.execute(text("DELETE FROM movimientos_caja WHERE referencia_id = :id AND tipo = 'entrada' AND categoria = 'inversion'"), {"id": str(iny_id)})
+        return jsonify({"msg": "Inyección eliminada y movimiento de caja revertido"}), 200
     except Exception as e:
         current_app.logger.exception("Error en delete_inyeccion: %s", e)
         return jsonify({"error": "Error al eliminar inyección"}), 500
