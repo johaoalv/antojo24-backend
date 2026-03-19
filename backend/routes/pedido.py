@@ -75,14 +75,19 @@ def pedido():
                 # Ahora iterar sobre productos_a_procesar para buscar sus recetas
                 for bp in productos_a_procesar:
                     sql_receta = """
-                        SELECT i.id, i.nombre, i.stock, r.cantidad_requerida
+                        SELECT i.id, i.nombre, i.stock, i.costo_unidad, r.cantidad_requerida
                         FROM recetas r
                         JOIN insumos i ON r.insumo_id = i.id
                         WHERE LOWER(r.producto) = :producto
                     """
                     ingredientes = conn.execute(text(sql_receta), {"producto": bp["nombre"]}).mappings().all()
                     
+                    # Calcular costo del producto individual (unitario)
+                    costo_producto_unitario = 0.0
                     for ing in ingredientes:
+                        costo_ing = float(ing["costo_unidad"] or 0) * float(ing["cantidad_requerida"] or 0)
+                        costo_producto_unitario += costo_ing
+                        
                         i_id = ing["id"]
                         if i_id not in insumos_requeridos:
                             insumos_requeridos[i_id] = {
@@ -91,23 +96,27 @@ def pedido():
                                 "necesario": 0.0
                             }
                         insumos_requeridos[i_id]["necesario"] += float(ing["cantidad_requerida"] or 0) * bp["cantidad"]
+                        
+                    # Guardar el costo unitario calculado para este producto/item en el pedido
+                    # Lo vinculamos al item original de data["pedido"] si es posible
+                    # (Más simple: lo calculamos de nuevo al insertar cada item)
 
-        # Verificar disponibilidad (Solo para log de advertencia, no bloquea)
-        faltantes = []
-        for info in insumos_requeridos.values():
-            if info["stock"] < info["necesario"]:
-                faltantes.append(f"{info['nombre']} (disponible: {info['stock']}, requerido: {info['necesario']})")
-
-        if faltantes:
-            current_app.logger.warning(f"⚠️ Stock insuficiente para el pedido: {faltantes}. Se procede con el descuento igualmente.")
-            # Ya no bloqueamos la venta, el stock quedará negativo
+        # Calcular el costo total de TODO el pedido
+        # (Sumando todos los insumos multiplicados por su costo unitario en el inventario actual)
+        costo_total_pedido = 0.0
+        with engine.connect() as conn:
+            for i_id, info in insumos_requeridos.items():
+                sql_costo_insumo = "SELECT costo_unidad FROM insumos WHERE id = :id"
+                ci = conn.execute(text(sql_costo_insumo), {"id": i_id}).mappings().first()
+                if ci:
+                    costo_total_pedido += (float(ci["costo_unidad"] or 0) * info["necesario"])
 
         # Procesar el pedido en una transacción
         with engine.begin() as conn:
-            # 1. Insertar el pedido principal
+            # 1. Insertar el pedido principal con costo_total
             sql_pedido = """
-                INSERT INTO pedidos (pedido_id, total_pedido, metodo_pago, sucursal_id, fecha, monto_recibido, monto_vuelto)
-                VALUES (:pedido_id, :total_pedido, :metodo_pago, :sucursal_id, :fecha, :monto_recibido, :monto_vuelto)
+                INSERT INTO pedidos (pedido_id, total_pedido, metodo_pago, sucursal_id, fecha, monto_recibido, monto_vuelto, costo_total)
+                VALUES (:pedido_id, :total_pedido, :metodo_pago, :sucursal_id, :fecha, :monto_recibido, :monto_vuelto, :costo_total)
             """
             params_pedido = {
                 "pedido_id": data["pedido_id"],
@@ -116,17 +125,34 @@ def pedido():
                 "sucursal_id": data["sucursal_id"],
                 "fecha": data["fecha"],
                 "monto_recibido": monto_recibido,
-                "monto_vuelto": monto_vuelto
+                "monto_vuelto": monto_vuelto,
+                "costo_total": costo_total_pedido
             }
             conn.execute(text(sql_pedido), params_pedido)
             
-            # 2. Insertar los productos del pedido
+            # 2. Insertar los productos del pedido en la nueva tabla pedido_detalle
             sql_productos = """
-                INSERT INTO productos_pedido (pedido_id, producto, cantidad, total_item, total_pedido, metodo_pago, sucursal_id, fecha)
-                VALUES (:pedido_id, :producto, :cantidad, :total_item, :total_pedido, :metodo_pago, :sucursal_id, :fecha)
+                INSERT INTO pedido_detalle (pedido_id, producto, cantidad, total_item, total_pedido, metodo_pago, sucursal_id, fecha, costo_unitario, producto_id)
+                VALUES (:pedido_id, :producto, :cantidad, :total_item, :total_pedido, :metodo_pago, :sucursal_id, :fecha, :costo_unitario, :producto_id)
             """
             
             for item in data["pedido"]:
+                # Obtener producto_id
+                item_name = item["producto"].lower()
+                sql_get_producto = "SELECT id FROM productos WHERE LOWER(nombre) = :producto"
+                prod_res = conn.execute(text(sql_get_producto), {"producto": item_name}).mappings().first()
+                p_id = prod_res["id"] if prod_res else None
+
+                # Calcular costo unitario (frozen) para este producto específico
+                sql_get_costo = """
+                    SELECT SUM(r.cantidad_requerida * i.costo_unidad) as costo_total
+                    FROM recetas r
+                    JOIN insumos i ON r.insumo_id = i.id
+                    WHERE LOWER(r.producto) = :producto
+                """
+                res_costo = conn.execute(text(sql_get_costo), {"producto": item_name}).mappings().first()
+                costo_u = float(res_costo["costo_total"] or 0) if res_costo else 0.0
+
                 conn.execute(text(sql_productos), {
                     "pedido_id": data["pedido_id"],
                     "producto": item["producto"],
@@ -135,8 +161,23 @@ def pedido():
                     "total_pedido": data["total_pedido"],
                     "metodo_pago": data["metodo_pago"],
                     "sucursal_id": data["sucursal_id"],
-                    "fecha": data["fecha"]
+                    "fecha": data["fecha"],
+                    "costo_unitario": costo_u,
+                    "producto_id": p_id
                 })
+            
+            # 3. Registrar el MOVIMIENTO DE CAJA (La Clave 🔑)
+            sql_movimiento = """
+                INSERT INTO movimientos_caja (fecha, tipo, categoria, monto, descripcion, sucursal_id, referencia_id)
+                VALUES (:fecha, 'entrada', 'venta', :monto, :descripcion, :sucursal_id, :referencia_id)
+            """
+            conn.execute(text(sql_movimiento), {
+                "fecha": data["fecha"],
+                "monto": data["total_pedido"],
+                "descripcion": f"Venta registrada - ID: {data['pedido_id']}",
+                "sucursal_id": data["sucursal_id"],
+                "referencia_id": data["pedido_id"]
+            })
             
             # 3. Descontar stock (usando el cálculo previo)
             for i_id, info in insumos_requeridos.items():
@@ -238,10 +279,11 @@ def eliminar_pedido(pedido_id):
                         current_app.logger.debug(f"Restaurado {total_a_devolver} del insumo {ing['insumo_nombre']} por {bp['nombre']}")
 
             # 3. Eliminar registros de las tablas
-            conn.execute(text("DELETE FROM productos_pedido WHERE pedido_id = :pedido_id"), {"pedido_id": pedido_id})
+            conn.execute(text("DELETE FROM pedido_detalle WHERE pedido_id = :pedido_id"), {"pedido_id": pedido_id})
             conn.execute(text("DELETE FROM pedidos WHERE pedido_id = :pedido_id"), {"pedido_id": pedido_id})
+            conn.execute(text("DELETE FROM movimientos_caja WHERE referencia_id = :pedido_id AND categoria = 'venta'"), {"pedido_id": pedido_id})
 
-            current_app.logger.info(f"✅ Pedido {pedido_id} eliminado y stock restaurado.")
+            current_app.logger.info(f"✅ Pedido {pedido_id} eliminado, stock restaurado y movimiento de caja revertido.")
 
         emitir_dashboard_update()
         return jsonify({
