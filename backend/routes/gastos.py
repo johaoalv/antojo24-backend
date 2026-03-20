@@ -14,7 +14,7 @@ def get_gastos():
         where_clause = "" if is_global else "WHERE sucursal_id = :s_id"
         params = {} if is_global else {"s_id": s_id_filter}
 
-        sql = f"SELECT id, fecha::text, monto, descripcion, sucursal_id, categoria FROM gastos {where_clause} ORDER BY fecha DESC"
+        sql = f"SELECT id, fecha::text, monto, descripcion, sucursal_id, categoria, metodo_pago FROM gastos {where_clause} ORDER BY fecha DESC"
         results = fetch_all(sql, params)
         return jsonify(results), 200
     except Exception as e:
@@ -29,6 +29,7 @@ def add_gasto():
         monto = data.get("monto")
         descripcion = data.get("descripcion", "")
         categoria = data.get("categoria", "operativo")
+        metodo_pago = data.get("metodo_pago", "efectivo") # 👈 Nuevo campo
         fecha = data.get("fecha") or date.today().isoformat()
         sucursal_id = data.get("sucursal_id")
 
@@ -41,19 +42,26 @@ def add_gasto():
             categoria = "inventario"
 
         with engine.begin() as conn:
-            # 1. Insertar en tabla original (gastos)
+            # 1. Insertar en tabla original (gastos) con método de pago
             sql_gasto = """
-                INSERT INTO gastos (fecha, monto, descripcion, sucursal_id, categoria) 
-                VALUES (:fecha, :monto, :descripcion, :sucursal_id, :categoria)
+                INSERT INTO gastos (fecha, monto, descripcion, sucursal_id, categoria, metodo_pago) 
+                VALUES (:fecha, :monto, :descripcion, :sucursal_id, :categoria, :metodo_pago)
                 RETURNING id
             """
-            res = conn.execute(text(sql_gasto), {"fecha": fecha, "monto": monto, "descripcion": descripcion, "sucursal_id": sucursal_id, "categoria": categoria})
+            res = conn.execute(text(sql_gasto), {
+                "fecha": fecha, 
+                "monto": monto, 
+                "descripcion": descripcion, 
+                "sucursal_id": sucursal_id, 
+                "categoria": categoria,
+                "metodo_pago": metodo_pago
+            })
             g_id = res.fetchone()[0]
 
-            # 2. Insertar en movimientos_caja
+            # 2. Insertar en movimientos_caja con método de pago
             sql_mov = """
-                INSERT INTO movimientos_caja (fecha, tipo, categoria, monto, descripcion, sucursal_id, referencia_id)
-                VALUES (:fecha, 'salida', :categoria, :monto, :descripcion, :sucursal_id, :referencia_id)
+                INSERT INTO movimientos_caja (fecha, tipo, categoria, monto, descripcion, sucursal_id, referencia_id, metodo_pago)
+                VALUES (:fecha, 'salida', :categoria, :monto, :descripcion, :sucursal_id, :referencia_id, :metodo_pago)
             """
             conn.execute(text(sql_mov), {
                 "fecha": fecha,
@@ -61,7 +69,8 @@ def add_gasto():
                 "monto": monto,
                 "descripcion": descripcion,
                 "sucursal_id": sucursal_id,
-                "referencia_id": str(g_id)
+                "referencia_id": str(g_id),
+                "metodo_pago": metodo_pago
             })
         
         return jsonify({"msg": "Gasto agregado y registrado en caja correctamente"}), 201
