@@ -130,10 +130,10 @@ def pedido():
             }
             conn.execute(text(sql_pedido), params_pedido)
             
-            # 2. Insertar los productos del pedido en la nueva tabla pedido_detalle
+            # 2. Insertar los productos del pedido en la tabla oficial productos_pedido
             sql_productos = """
-                INSERT INTO pedido_detalle (pedido_id, producto, cantidad, total_item, total_pedido, metodo_pago, sucursal_id, fecha, costo_unitario, producto_id)
-                VALUES (:pedido_id, :producto, :cantidad, :total_item, :total_pedido, :metodo_pago, :sucursal_id, :fecha, :costo_unitario, :producto_id)
+                INSERT INTO productos_pedido (pedido_id, producto, cantidad, total_item, metodo_pago, sucursal_id, fecha, costo_unitario, producto_id)
+                VALUES (:pedido_id, :producto, :cantidad, :total_item, :metodo_pago, :sucursal_id, :fecha, :costo_unitario, :producto_id)
             """
             
             for item in data["pedido"]:
@@ -158,7 +158,6 @@ def pedido():
                     "producto": item["producto"],
                     "cantidad": item["cantidad"],
                     "total_item": item["total_item"],
-                    "total_pedido": data["total_pedido"],
                     "metodo_pago": data["metodo_pago"],
                     "sucursal_id": data["sucursal_id"],
                     "fecha": data["fecha"],
@@ -279,7 +278,7 @@ def eliminar_pedido(pedido_id):
                         current_app.logger.debug(f"Restaurado {total_a_devolver} del insumo {ing['insumo_nombre']} por {bp['nombre']}")
 
             # 3. Eliminar registros de las tablas
-            conn.execute(text("DELETE FROM pedido_detalle WHERE pedido_id = :pedido_id"), {"pedido_id": pedido_id})
+            conn.execute(text("DELETE FROM productos_pedido WHERE pedido_id = :pedido_id"), {"pedido_id": pedido_id})
             conn.execute(text("DELETE FROM pedidos WHERE pedido_id = :pedido_id"), {"pedido_id": pedido_id})
             conn.execute(text("DELETE FROM movimientos_caja WHERE referencia_id = :pedido_id AND categoria = 'venta'"), {"pedido_id": pedido_id})
 
