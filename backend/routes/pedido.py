@@ -43,14 +43,14 @@ def pedido():
                     cantidad_vendida = int(float(item.get("cantidad", 0)))
                 except (ValueError, TypeError):
                     cantidad_vendida = 0
-                
+
                 if cantidad_vendida <= 0:
                     continue
 
                 # NUEVO CÓDIGO PARA DESCOMPONER COMBOS EN PRODUCTOS BASE
                 sql_prod = "SELECT es_combo, combo_items FROM productos WHERE LOWER(nombre) = :producto"
                 prod = conn.execute(text(sql_prod), {"producto": producto_nombre}).mappings().first()
-                
+
                 productos_a_procesar = []
                 if prod and prod["es_combo"] and prod["combo_items"]:
                     import json
@@ -81,13 +81,13 @@ def pedido():
                         WHERE LOWER(r.producto) = :producto
                     """
                     ingredientes = conn.execute(text(sql_receta), {"producto": bp["nombre"]}).mappings().all()
-                    
+
                     # Calcular costo del producto individual (unitario)
                     costo_producto_unitario = 0.0
                     for ing in ingredientes:
                         costo_ing = float(ing["costo_unidad"] or 0) * float(ing["cantidad_requerida"] or 0)
                         costo_producto_unitario += costo_ing
-                        
+
                         i_id = ing["id"]
                         if i_id not in insumos_requeridos:
                             insumos_requeridos[i_id] = {
@@ -96,10 +96,26 @@ def pedido():
                                 "necesario": 0.0
                             }
                         insumos_requeridos[i_id]["necesario"] += float(ing["cantidad_requerida"] or 0) * bp["cantidad"]
-                        
+
                     # Guardar el costo unitario calculado para este producto/item en el pedido
                     # Lo vinculamos al item original de data["pedido"] si es posible
                     # (Más simple: lo calculamos de nuevo al insertar cada item)
+
+            # --- AGREGAR BOLSA DE ENTREGA SI PEDIDO >= 2 UNIDADES ---
+            total_unidades = sum([int(float(item.get("cantidad", 0))) for item in data.get("pedido", [])])
+            if total_unidades >= 2:
+                sql_bolsa = "SELECT id, nombre, stock, costo_unidad FROM insumos WHERE id = 30"
+                bolsa = conn.execute(text(sql_bolsa)).mappings().first()
+                if bolsa:
+                    bolsa_id = bolsa["id"]
+                    if bolsa_id not in insumos_requeridos:
+                        insumos_requeridos[bolsa_id] = {
+                            "nombre": bolsa["nombre"],
+                            "stock": float(bolsa["stock"] or 0),
+                            "necesario": 0.0
+                        }
+                    insumos_requeridos[bolsa_id]["necesario"] += 1.0
+                    current_app.logger.info(f"✅ Bolsa de entrega agregada al pedido {data['pedido_id']}")
 
         # Calcular el costo total de TODO el pedido
         # (Sumando todos los insumos multiplicados por su costo unitario en el inventario actual)
