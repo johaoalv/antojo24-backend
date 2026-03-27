@@ -37,13 +37,14 @@ def create_producto():
         combo_items = json.dumps(data.get("combo_items", []))
         
         sql = """
-            INSERT INTO productos (nombre, precio, imagen, es_combo, combo_items)
-            VALUES (:nombre, :precio, :imagen, :es_combo, :combo_items)
+            INSERT INTO productos (nombre, precio, precio_delivery, imagen, es_combo, combo_items)
+            VALUES (:nombre, :precio, :precio_delivery, :imagen, :es_combo, :combo_items)
             RETURNING id
         """
         params = {
             "nombre": data["nombre"],
             "precio": data["precio"],
+            "precio_delivery": data.get("precio_delivery"),
             "imagen": data.get("imagen", ""),
             "es_combo": data.get("es_combo", False),
             "combo_items": combo_items
@@ -88,6 +89,9 @@ def update_producto(id):
         if "es_combo" in data:
             updates.append("es_combo = :es_combo")
             params["es_combo"] = data["es_combo"]
+        if "precio_delivery" in data:
+            updates.append("precio_delivery = :precio_delivery")
+            params["precio_delivery"] = data["precio_delivery"]
         if "combo_items" in data:
             updates.append("combo_items = :combo_items")
             params["combo_items"] = json.dumps(data["combo_items"])
