@@ -8,9 +8,11 @@ def get_costeo_productos():
     try:
         # Consulta para obtener el costo total de cada producto sumando sus ingredientes
         sql = """
-            SELECT 
+            SELECT
                 r.producto,
                 SUM(r.cantidad_requerida * i.costo_unidad) as costo_total,
+                p.precio,
+                p.precio_delivery,
                 json_agg(json_build_object(
                     'nombre_insumo', i.nombre,
                     'cantidad', r.cantidad_requerida,
@@ -21,7 +23,8 @@ def get_costeo_productos():
                 )) as ingredientes
             FROM recetas r
             JOIN insumos i ON r.insumo_id = i.id
-            GROUP BY r.producto
+            LEFT JOIN productos p ON LOWER(p.nombre) = LOWER(r.producto)
+            GROUP BY r.producto, p.precio, p.precio_delivery
             ORDER BY r.producto ASC
         """
         resultados = fetch_all(sql)
