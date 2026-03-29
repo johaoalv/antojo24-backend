@@ -119,3 +119,12 @@ def guardar_receta():
     except Exception as e:
         current_app.logger.error(f"Error al guardar receta: {e}")
         return jsonify({"error": str(e)}), 500
+
+@produccion_bp.route("/api/produccion/receta/<int:insumo_id>", methods=["DELETE"])
+def eliminar_composicion(insumo_id):
+    try:
+        execute("DELETE FROM composicion_insumos WHERE insumo_compuesto_id = :id", {"id": insumo_id})
+        return jsonify({"message": "Composición eliminada correctamente"}), 200
+    except Exception as e:
+        current_app.logger.error(f"Error al eliminar composición: {e}")
+        return jsonify({"error": str(e)}), 500
