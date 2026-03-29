@@ -1,5 +1,6 @@
 from flask import Blueprint, request, jsonify, current_app
 from utils.emit_dashboard_update import emitir_dashboard_update
+from utils.emit_stock_alerts import emitir_stock_alerts
 from db import engine
 from sqlalchemy import text
 
@@ -211,6 +212,7 @@ def pedido():
             
         current_app.logger.info("🚀 Emitiendo actualización de dashboard vía WebSocket...")
         emitir_dashboard_update()
+        emitir_stock_alerts()
         return jsonify(response_data), 201
         
     except Exception as e:
@@ -302,6 +304,7 @@ def eliminar_pedido(pedido_id):
             current_app.logger.info(f"✅ Pedido {pedido_id} eliminado, stock restaurado y movimiento de caja revertido.")
 
         emitir_dashboard_update()
+        emitir_stock_alerts()
         return jsonify({
             "message": "Pedido eliminado y stock restaurado correctamente",
             "restored_items": restored_items

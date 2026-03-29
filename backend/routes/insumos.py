@@ -42,7 +42,7 @@ def add_insumo():
 def update_insumo(insumo_id):
     data = request.json
     try:
-        sql = "UPDATE insumos SET stock = :stock, costo_unidad = :costo, unidad_medida = :unidad, nombre = :nombre, sucursal_id = :sucursal_id, porcion_estandar = :porcion WHERE id = :id RETURNING *"
+        sql = "UPDATE insumos SET stock = :stock, costo_unidad = :costo, unidad_medida = :unidad, nombre = :nombre, sucursal_id = :sucursal_id, porcion_estandar = :porcion, stock_minimo = :stock_minimo, alerta_vista = FALSE WHERE id = :id RETURNING *"
         params = {
             "id": insumo_id,
             "nombre": data["nombre"].lower(),
@@ -50,7 +50,8 @@ def update_insumo(insumo_id):
             "costo": data["costo_unidad"],
             "unidad": data["unidad_medida"],
             "sucursal_id": data.get("sucursal_id"),
-            "porcion": data.get("porcion_estandar")
+            "porcion": data.get("porcion_estandar"),
+            "stock_minimo": data.get("stock_minimo", 0)
         }
         actualizado = fetch_one(sql, params)
         if not actualizado:
@@ -59,6 +60,51 @@ def update_insumo(insumo_id):
     except Exception as e:
         current_app.logger.error(f"Error al actualizar insumo: {e}")
         return jsonify({"error": "Error al actualizar insumo"}), 500
+
+@insumos_bp.route("/api/insumos/<int:insumo_id>/alerta-vista", methods=["PUT"])
+def marcar_alerta_vista(insumo_id):
+    try:
+        execute("UPDATE insumos SET alerta_vista = TRUE WHERE id = :id", {"id": insumo_id})
+        return jsonify({"message": "Alerta marcada como vista"}), 200
+    except Exception as e:
+        current_app.logger.error(f"Error al marcar alerta: {e}")
+        return jsonify({"error": "Error al marcar alerta"}), 500
+
+@insumos_bp.route("/api/insumos/alertas", methods=["GET"])
+def get_alertas_stock():
+    """Obtener insumos con stock bajo (para carga inicial sin WebSocket)"""
+    try:
+        sql = """
+            SELECT id, nombre, stock, stock_minimo, unidad_medida
+            FROM insumos
+            WHERE stock_minimo > 0
+              AND stock <= stock_minimo
+              AND alerta_vista = FALSE
+            ORDER BY stock ASC
+        """
+        insumos_bajos = fetch_all(sql)
+        alertas = []
+        for insumo in insumos_bajos:
+            stock = float(insumo["stock"] or 0)
+            minimo = float(insumo["stock_minimo"] or 0)
+            if stock <= 0:
+                nivel = "critico"
+            elif stock <= minimo * 0.5:
+                nivel = "alto"
+            else:
+                nivel = "bajo"
+            alertas.append({
+                "id": insumo["id"],
+                "nombre": insumo["nombre"],
+                "stock": stock,
+                "stock_minimo": minimo,
+                "unidad_medida": insumo["unidad_medida"],
+                "nivel": nivel
+            })
+        return jsonify(alertas), 200
+    except Exception as e:
+        current_app.logger.error(f"Error al obtener alertas: {e}")
+        return jsonify({"error": "Error al obtener alertas"}), 500
 
 @insumos_bp.route("/api/insumos/<int:insumo_id>", methods=["DELETE"])
 def delete_insumo(insumo_id):
