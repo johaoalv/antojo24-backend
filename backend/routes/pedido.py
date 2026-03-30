@@ -102,9 +102,10 @@ def pedido():
                     # Lo vinculamos al item original de data["pedido"] si es posible
                     # (Más simple: lo calculamos de nuevo al insertar cada item)
 
-            # --- AGREGAR BOLSA DE ENTREGA SI PEDIDO >= 2 UNIDADES ---
-            total_unidades = sum([int(float(item.get("cantidad", 0))) for item in data.get("pedido", [])])
-            if total_unidades >= 2:
+        # --- BOLSAS DE ENTREGA (manual desde POS) ---
+        bolsas = int(data.get("bolsas", 0))
+        if bolsas > 0:
+            with engine.connect() as conn:
                 sql_bolsa = "SELECT id, nombre, stock, costo_unidad FROM insumos WHERE id = 30"
                 bolsa = conn.execute(text(sql_bolsa)).mappings().first()
                 if bolsa:
@@ -115,8 +116,8 @@ def pedido():
                             "stock": float(bolsa["stock"] or 0),
                             "necesario": 0.0
                         }
-                    insumos_requeridos[bolsa_id]["necesario"] += 1.0
-                    current_app.logger.info(f"✅ Bolsa de entrega agregada al pedido {data['pedido_id']}")
+                    insumos_requeridos[bolsa_id]["necesario"] += float(bolsas)
+                    current_app.logger.info(f"🛍️ {bolsas} bolsa(s) agregada(s) al pedido {data['pedido_id']}")
 
         # Calcular el costo total de TODO el pedido
         # (Sumando todos los insumos multiplicados por su costo unitario en el inventario actual)
