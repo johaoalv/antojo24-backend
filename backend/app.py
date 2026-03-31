@@ -44,10 +44,8 @@ from routes.recetas import recetas_bp
 from routes.mermas import mermas_bp
 from routes.productos import productos_bp
 from routes.finanzas import finanzas_bp
-from routes.upload import upload_bp
 
 app.register_blueprint(auth_bp)
-app.register_blueprint(upload_bp, url_prefix="/api")
 app.register_blueprint(pedido_bp)
 app.register_blueprint(dashboard_bp)
 app.register_blueprint(print_bp)
