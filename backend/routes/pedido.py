@@ -48,16 +48,22 @@ def pedido():
                 if cantidad_vendida <= 0:
                     continue
 
-                # NUEVO CÓDIGO PARA DESCOMPONER COMBOS EN PRODUCTOS BASE
+                # DESCOMPONER COMBOS EN PRODUCTOS BASE
                 sql_prod = "SELECT es_combo, combo_items FROM productos WHERE LOWER(nombre) = :producto"
                 prod = conn.execute(text(sql_prod), {"producto": producto_nombre}).mappings().first()
 
                 productos_a_procesar = []
-                if prod and prod["es_combo"] and prod["combo_items"]:
+                if prod and prod["es_combo"]:
                     import json
                     try:
-                        items_combo = prod["combo_items"] if isinstance(prod["combo_items"], list) else json.loads(prod["combo_items"])
+                        # Obtener combo_items de la BD
+                        if prod["combo_items"]:
+                            items_combo = prod["combo_items"] if isinstance(prod["combo_items"], list) else json.loads(prod["combo_items"])
+                        else:
+                            items_combo = []
+
                         for ci in items_combo:
+                            # Procesar items fijos del combo
                             base_prod = conn.execute(text("SELECT nombre FROM productos WHERE id = :id"), {"id": ci["id"]}).mappings().first()
                             if base_prod:
                                 productos_a_procesar.append({
@@ -246,7 +252,7 @@ def eliminar_pedido(pedido_id):
                 # Obtener si el producto es combo
                 sql_prod = "SELECT es_combo, combo_items FROM productos WHERE LOWER(nombre) = :producto"
                 prod = conn.execute(text(sql_prod), {"producto": producto_nombre}).mappings().first()
-                
+
                 productos_a_procesar = []
                 if prod and prod["es_combo"] and prod["combo_items"]:
                     import json
@@ -260,7 +266,7 @@ def eliminar_pedido(pedido_id):
                                     "cantidad": float(ci.get("cantidad", 1)) * cantidad_vendida
                                 })
                     except Exception as e:
-                        pass
+                        current_app.logger.error(f"Error procesando combo_items en eliminación: {e}")
                 else:
                     productos_a_procesar.append({
                         "nombre": producto_nombre,
