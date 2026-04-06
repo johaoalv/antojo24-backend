@@ -191,18 +191,22 @@ def pedido():
                     "producto_id": p_id
                 })
             
-            # 3. Registrar el MOVIMIENTO DE CAJA (La Clave 🔑)
-            sql_movimiento = """
-                INSERT INTO movimientos_caja (fecha, tipo, categoria, monto, descripcion, sucursal_id, referencia_id)
-                VALUES (:fecha, 'entrada', 'venta', :monto, :descripcion, :sucursal_id, :referencia_id)
-            """
-            conn.execute(text(sql_movimiento), {
-                "fecha": data["fecha"],
-                "monto": data["total_pedido"],
-                "descripcion": f"Venta registrada - ID: {data['pedido_id']}",
-                "sucursal_id": data["sucursal_id"],
-                "referencia_id": data["pedido_id"]
-            })
+            # 3. Registrar el MOVIMIENTO DE CAJA (Solo si el pago ya fue recibido)
+            estado_pago = data.get("estado_pago", "pagado")
+            if estado_pago != "pendiente":
+                sql_movimiento = """
+                    INSERT INTO movimientos_caja (fecha, tipo, categoria, monto, descripcion, sucursal_id, referencia_id)
+                    VALUES (:fecha, 'entrada', 'venta', :monto, :descripcion, :sucursal_id, :referencia_id)
+                """
+                conn.execute(text(sql_movimiento), {
+                    "fecha": data["fecha"],
+                    "monto": data["total_pedido"],
+                    "descripcion": f"Venta registrada - ID: {data['pedido_id']}",
+                    "sucursal_id": data["sucursal_id"],
+                    "referencia_id": data["pedido_id"]
+                })
+            else:
+                current_app.logger.info(f"⏳ Pedido {data['pedido_id']} pendiente de pago (delivery). Movimiento de caja diferido.")
             
             # 3. Descontar stock (usando el cálculo previo)
             for i_id, info in insumos_requeridos.items():
@@ -321,6 +325,77 @@ def eliminar_pedido(pedido_id):
     except Exception as e:
         current_app.logger.exception(f"Error al eliminar pedido {pedido_id}: {str(e)}")
         return jsonify({"error": "Error interno al eliminar el pedido"}), 500
+
+
+@pedido_bp.route("/api/pedido/<pedido_id>/pagar", methods=["PATCH"])
+def marcar_pagado(pedido_id):
+    """Marca un pedido pendiente como pagado y crea el movimiento de caja."""
+    current_app.logger.info(f"💰 Marcando pedido {pedido_id} como pagado...")
+    try:
+        with engine.begin() as conn:
+            # 1. Verificar que el pedido existe y está pendiente
+            sql_check = "SELECT pedido_id, total_pedido, fecha, sucursal_id, estado_pago FROM pedidos WHERE pedido_id = :pid"
+            pedido = conn.execute(text(sql_check), {"pid": pedido_id}).mappings().first()
+
+            if not pedido:
+                return jsonify({"error": "Pedido no encontrado"}), 404
+
+            if pedido["estado_pago"] == "pagado":
+                return jsonify({"error": "Este pedido ya está marcado como pagado"}), 409
+
+            # 2. Actualizar estado_pago
+            conn.execute(text("UPDATE pedidos SET estado_pago = 'pagado' WHERE pedido_id = :pid"), {"pid": pedido_id})
+
+            # 3. Crear el movimiento de caja que se difirió
+            sql_mov = """
+                INSERT INTO movimientos_caja (fecha, tipo, categoria, monto, descripcion, sucursal_id, referencia_id)
+                VALUES (:fecha, 'entrada', 'venta', :monto, :descripcion, :sucursal_id, :referencia_id)
+            """
+            conn.execute(text(sql_mov), {
+                "fecha": str(pedido["fecha"]),
+                "monto": float(pedido["total_pedido"]),
+                "descripcion": f"Pago recibido (delivery) - ID: {pedido_id}",
+                "sucursal_id": pedido["sucursal_id"],
+                "referencia_id": pedido_id
+            })
+
+            current_app.logger.info(f"✅ Pedido {pedido_id} marcado como pagado. Movimiento de caja creado.")
+
+        emitir_dashboard_update()
+        return jsonify({"message": "Pedido marcado como pagado y movimiento de caja registrado"}), 200
+
+    except Exception as e:
+        current_app.logger.exception(f"Error al marcar pedido como pagado: {str(e)}")
+        return jsonify({"error": "Error interno al procesar el pago"}), 500
+
+
+@pedido_bp.route("/api/pedidos/pendientes", methods=["GET"])
+def get_pedidos_pendientes():
+    """Obtiene todos los pedidos con estado_pago = 'pendiente'."""
+    try:
+        sucursal_id = request.args.get("sucursal_id")
+        is_global = not sucursal_id or sucursal_id == "global"
+
+        where_clause = "WHERE p.estado_pago = 'pendiente'"
+        params = {}
+        if not is_global:
+            where_clause += " AND p.sucursal_id = :s_id"
+            params["s_id"] = sucursal_id
+
+        sql = f"""
+            SELECT p.pedido_id, p.total_pedido, p.metodo_pago, p.tipo_pedido,
+                   p.estado_pago, p.fecha, p.sucursal_id
+            FROM pedidos p
+            {where_clause}
+            ORDER BY p.fecha DESC
+        """
+        from db import fetch_all
+        rows = fetch_all(sql, params)
+        return jsonify(rows), 200
+
+    except Exception as e:
+        current_app.logger.exception(f"Error al obtener pedidos pendientes: {str(e)}")
+        return jsonify({"error": "Error interno"}), 500
 
 
 @pedido_bp.route("/api/pedido", methods=["OPTIONS"])

@@ -20,6 +20,7 @@ allowed_origins = [o for o in allowed_origins if o]
 
 CORS(app, resources={r"/api/*": {
     "origins": allowed_origins,
+    "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     "supports_credentials": True
 }})
 
@@ -66,7 +67,7 @@ def aplicar_cors_headers(response):
     if origin in allowed_origins:
         response.headers["Access-Control-Allow-Origin"] = origin
     response.headers["Access-Control-Allow-Headers"] = "Content-Type,Authorization"
-    response.headers["Access-Control-Allow-Methods"] = "GET,POST,PUT,DELETE,OPTIONS"
+    response.headers["Access-Control-Allow-Methods"] = "GET,POST,PUT,PATCH,DELETE,OPTIONS"
     response.headers["Access-Control-Allow-Credentials"] = "true"
     # Log request + response summary so it's visible in the server console
     try:
