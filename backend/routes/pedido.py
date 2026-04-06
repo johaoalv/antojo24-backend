@@ -139,8 +139,8 @@ def pedido():
         with engine.begin() as conn:
             # 1. Insertar el pedido principal con costo_total
             sql_pedido = """
-                INSERT INTO pedidos (pedido_id, total_pedido, metodo_pago, sucursal_id, fecha, monto_recibido, monto_vuelto, costo_total, tipo_pedido)
-                VALUES (:pedido_id, :total_pedido, :metodo_pago, :sucursal_id, :fecha, :monto_recibido, :monto_vuelto, :costo_total, :tipo_pedido)
+                INSERT INTO pedidos (pedido_id, total_pedido, metodo_pago, sucursal_id, fecha, monto_recibido, monto_vuelto, costo_total, tipo_pedido, estado_pago)
+                VALUES (:pedido_id, :total_pedido, :metodo_pago, :sucursal_id, :fecha, :monto_recibido, :monto_vuelto, :costo_total, :tipo_pedido, :estado_pago)
             """
             params_pedido = {
                 "pedido_id": data["pedido_id"],
@@ -151,7 +151,8 @@ def pedido():
                 "monto_recibido": monto_recibido,
                 "monto_vuelto": monto_vuelto,
                 "costo_total": costo_total_pedido,
-                "tipo_pedido": data.get("tipo_pedido", "local")
+                "tipo_pedido": data.get("tipo_pedido", "local"),
+                "estado_pago": data.get("estado_pago", "pagado")
             }
             conn.execute(text(sql_pedido), params_pedido)
             

@@ -36,22 +36,22 @@ def get_pedidos_hoy():
     inicio, fin, _ = get_rango_fecha_panama()
 
     try:
-        # Debug completo de la consulta
-        sql = "SELECT * FROM productos_pedido WHERE sucursal_id = :sucursal_id AND fecha >= :inicio AND fecha <= :fin"
+        sql = """
+            SELECT
+                pp.*,
+                p.tipo_pedido,
+                p.estado_pago,
+                p.total_pedido
+            FROM productos_pedido pp
+            JOIN pedidos p ON pp.pedido_id = p.pedido_id
+            WHERE pp.sucursal_id = :sucursal_id
+              AND pp.fecha >= :inicio
+              AND pp.fecha <= :fin
+        """
         params = {"sucursal_id": sucursal_id, "inicio": inicio, "fin": fin}
-        
-        # Primero veamos si hay algún pedido sin filtros
-        todos_pedidos = fetch_all("SELECT COUNT(*) as total, MIN(fecha) as primer_pedido, MAX(fecha) as ultimo_pedido FROM productos_pedido")
-        
-        # Ahora la consulta real
         rows = fetch_all(sql, params)
-        
-        # Si no hay resultados, veamos qué pedidos hay para esta sucursal
+
         if not rows:
-            pedidos_sucursal = fetch_all(
-                "SELECT COUNT(*) as total, MIN(fecha) as primer_pedido, MAX(fecha) as ultimo_pedido FROM productos_pedido WHERE sucursal_id = :sucursal_id",
-                {"sucursal_id": sucursal_id}
-            )
             return jsonify({"error": "No hay pedidos hoy"}), 404
 
         return jsonify(rows), 200
@@ -210,6 +210,55 @@ def cierre_caja():
     except Exception as e:
         print(f"[DEBUG CIERRE] EXCEPCIÓN durante la inserción: {str(e)}")
         return jsonify({"error": f"Error al insertar cierre: {str(e)}"}), 500
+
+@cierre_bp.route("/api/pedidos-mes", methods=["GET"])
+def get_pedidos_mes():
+    sucursal_id = request.args.get("sucursal_id")
+    if not sucursal_id:
+        return jsonify({"error": "sucursal_id es requerido"}), 400
+
+    try:
+        now = get_panama_datetime()
+        inicio_mes = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M:%S")
+        fin_mes = now.strftime("%Y-%m-%dT23:59:59")
+
+        sql = """
+            SELECT
+                p.pedido_id,
+                p.fecha,
+                p.total_pedido,
+                p.metodo_pago,
+                p.tipo_pedido,
+                p.estado_pago
+            FROM pedidos p
+            WHERE p.sucursal_id = :sucursal_id
+              AND p.fecha >= :inicio
+              AND p.fecha <= :fin
+            ORDER BY p.fecha DESC
+        """
+        rows = fetch_all(sql, {"sucursal_id": sucursal_id, "inicio": inicio_mes, "fin": fin_mes})
+
+        # Calcular totales por método de pago
+        por_metodo = {}
+        total_mes = 0
+        for row in rows:
+            monto = float(row["total_pedido"] or 0)
+            total_mes += monto
+            metodo = row["metodo_pago"] or "otro"
+            por_metodo[metodo] = por_metodo.get(metodo, 0) + monto
+
+        return jsonify({
+            "pedidos": rows,
+            "resumen": {
+                "total": total_mes,
+                "cantidad": len(rows),
+                "por_metodo": por_metodo
+            }
+        }), 200
+
+    except Exception as e:
+        print(f"[ERROR] get_pedidos_mes: {str(e)}")
+        return jsonify({"error": "Error interno"}), 500
 
 @cierre_bp.route("/api/test-cierre", methods=["GET"])
 def test_cierre():
