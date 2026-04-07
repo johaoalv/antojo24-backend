@@ -195,15 +195,16 @@ def pedido():
             estado_pago = data.get("estado_pago", "pagado")
             if estado_pago != "pendiente":
                 sql_movimiento = """
-                    INSERT INTO movimientos_caja (fecha, tipo, categoria, monto, descripcion, sucursal_id, referencia_id)
-                    VALUES (:fecha, 'entrada', 'venta', :monto, :descripcion, :sucursal_id, :referencia_id)
+                    INSERT INTO movimientos_caja (fecha, tipo, categoria, monto, descripcion, sucursal_id, referencia_id, metodo_pago)
+                    VALUES (:fecha, 'entrada', 'venta', :monto, :descripcion, :sucursal_id, :referencia_id, :metodo_pago)
                 """
                 conn.execute(text(sql_movimiento), {
                     "fecha": data["fecha"],
                     "monto": data["total_pedido"],
                     "descripcion": f"Venta registrada - ID: {data['pedido_id']}",
                     "sucursal_id": data["sucursal_id"],
-                    "referencia_id": data["pedido_id"]
+                    "referencia_id": data["pedido_id"],
+                    "metodo_pago": data["metodo_pago"]
                 })
             else:
                 current_app.logger.info(f"⏳ Pedido {data['pedido_id']} pendiente de pago (delivery). Movimiento de caja diferido.")
