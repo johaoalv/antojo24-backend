@@ -333,9 +333,12 @@ def marcar_pagado(pedido_id):
     """Marca un pedido pendiente como pagado y crea el movimiento de caja."""
     current_app.logger.info(f"💰 Marcando pedido {pedido_id} como pagado...")
     try:
+        body = request.get_json(silent=True) or {}
+        monto_custom = body.get("monto")
+
         with engine.begin() as conn:
             # 1. Verificar que el pedido existe y está pendiente
-            sql_check = "SELECT pedido_id, total_pedido, fecha, sucursal_id, estado_pago FROM pedidos WHERE pedido_id = :pid"
+            sql_check = "SELECT pedido_id, total_pedido, fecha, sucursal_id, estado_pago, metodo_pago FROM pedidos WHERE pedido_id = :pid"
             pedido = conn.execute(text(sql_check), {"pid": pedido_id}).mappings().first()
 
             if not pedido:
@@ -344,20 +347,23 @@ def marcar_pagado(pedido_id):
             if pedido["estado_pago"] == "pagado":
                 return jsonify({"error": "Este pedido ya está marcado como pagado"}), 409
 
+            monto_final = float(monto_custom) if monto_custom is not None else float(pedido["total_pedido"])
+
             # 2. Actualizar estado_pago
             conn.execute(text("UPDATE pedidos SET estado_pago = 'pagado' WHERE pedido_id = :pid"), {"pid": pedido_id})
 
             # 3. Crear el movimiento de caja que se difirió
             sql_mov = """
-                INSERT INTO movimientos_caja (fecha, tipo, categoria, monto, descripcion, sucursal_id, referencia_id)
-                VALUES (:fecha, 'entrada', 'venta', :monto, :descripcion, :sucursal_id, :referencia_id)
+                INSERT INTO movimientos_caja (fecha, tipo, categoria, monto, descripcion, sucursal_id, referencia_id, metodo_pago)
+                VALUES (:fecha, 'entrada', 'venta', :monto, :descripcion, :sucursal_id, :referencia_id, :metodo_pago)
             """
             conn.execute(text(sql_mov), {
                 "fecha": str(pedido["fecha"]),
-                "monto": float(pedido["total_pedido"]),
+                "monto": monto_final,
                 "descripcion": f"Pago recibido (delivery) - ID: {pedido_id}",
                 "sucursal_id": pedido["sucursal_id"],
-                "referencia_id": pedido_id
+                "referencia_id": pedido_id,
+                "metodo_pago": pedido["metodo_pago"]
             })
 
             current_app.logger.info(f"✅ Pedido {pedido_id} marcado como pagado. Movimiento de caja creado.")
