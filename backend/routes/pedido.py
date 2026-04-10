@@ -411,6 +411,41 @@ def liquidacion_pedidosya():
         return jsonify({"error": "Error interno al procesar la liquidacion"}), 500
 
 
+@pedido_bp.route("/api/pedidos/liquidacion-uber", methods=["POST"])
+def liquidacion_uber():
+    """Marca pedidos Uber como pagados y registra el monto neto depositado."""
+    try:
+        body        = request.get_json()
+        pedido_ids  = body.get("pedidos", [])
+        monto_dep   = float(body.get("monto_depositado", 0))
+        sucursal_id = body.get("sucursal_id")
+
+        if not pedido_ids or monto_dep <= 0:
+            return jsonify({"error": "Pedidos y monto depositado son requeridos"}), 400
+
+        pagados = 0
+        with engine.begin() as conn:
+            for pid in pedido_ids:
+                pedido = conn.execute(text("SELECT estado_pago FROM pedidos WHERE pedido_id = :pid"), {"pid": pid}).mappings().first()
+                if not pedido or pedido["estado_pago"] == "pagado":
+                    continue
+                conn.execute(text("UPDATE pedidos SET estado_pago = 'pagado' WHERE pedido_id = :pid"), {"pid": pid})
+                pagados += 1
+
+            conn.execute(text("""
+                INSERT INTO movimientos_caja (fecha, tipo, categoria, monto, descripcion, sucursal_id, metodo_pago)
+                VALUES (NOW() AT TIME ZONE 'America/Panama', 'entrada', 'venta', :monto,
+                        'Liquidacion Uber - ' || :n || ' pedidos', :sucursal_id, 'yappy')
+            """), {"monto": monto_dep, "n": pagados, "sucursal_id": sucursal_id})
+
+        emitir_dashboard_update()
+        return jsonify({"pagados": pagados, "monto": monto_dep}), 200
+
+    except Exception as e:
+        current_app.logger.exception(f"Error en liquidacion_uber: {str(e)}")
+        return jsonify({"error": "Error interno al procesar la liquidacion"}), 500
+
+
 @pedido_bp.route("/api/pedidos/pendientes", methods=["GET"])
 def get_pedidos_pendientes():
     """Obtiene todos los pedidos con estado_pago = 'pendiente'."""
