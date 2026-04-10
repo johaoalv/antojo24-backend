@@ -127,6 +127,16 @@ def get_dashboard():
         res_caja_mes = fetch_one(sql_caja_mes, params_mes)
         saldo_caja_mes = to_number(res_caja_mes.get("saldo", 0))
 
+        # Flujo del MES desglosado por método de pago
+        sql_flujo_metodo = f"SELECT metodo_pago, SUM(CASE WHEN tipo = 'entrada' THEN monto ELSE -monto END) as saldo FROM movimientos_caja {where_mes} GROUP BY metodo_pago"
+        res_flujo_metodo = fetch_all(sql_flujo_metodo, params_mes)
+        flujo_por_metodo = {r["metodo_pago"]: round(to_number(r.get("saldo", 0)), 2) for r in res_flujo_metodo if r.get("metodo_pago")}
+
+        # Gastos del MES desglosados por método de pago
+        sql_gastos_metodo = f"SELECT metodo_pago, SUM(monto) as total FROM movimientos_caja {where_mes} AND tipo = 'salida' GROUP BY metodo_pago"
+        res_gastos_metodo = fetch_all(sql_gastos_metodo, params_mes)
+        gastos_por_metodo = {r["metodo_pago"]: round(to_number(r.get("total", 0)), 2) for r in res_gastos_metodo if r.get("metodo_pago")}
+
         # --- HISTORIAL MENSUAL ---
         sql_historial_mes = f"""
             SELECT 
@@ -193,6 +203,8 @@ def get_dashboard():
                 "ganancia_neta": round(ganancia_neta_mes, 2),
                 "saldo_caja": round(saldo_caja_total_historico, 2),
                 "saldo_caja_mes": round(saldo_caja_mes, 2),
+                "flujo_por_metodo": flujo_por_metodo,
+                "gastos_por_metodo": gastos_por_metodo,
                 "utilidad_acumulada": round(utilidad_acumulada_total, 2)
             },
             "historial_mensual": historial_mensual,
