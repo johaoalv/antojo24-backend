@@ -14,7 +14,7 @@ def get_inyecciones():
         where_clause = "" if is_global else "WHERE sucursal_id = :s_id"
         params = {} if is_global else {"s_id": s_id_filter}
 
-        sql = f"SELECT id, fecha::text, monto, descripcion, sucursal_id FROM inyecciones {where_clause} ORDER BY fecha DESC"
+        sql = f"SELECT id, fecha::text, monto, descripcion, sucursal_id, metodo_pago FROM inyecciones {where_clause} ORDER BY fecha DESC"
         results = fetch_all(sql, params)
         return jsonify(results), 200
     except Exception as e:
@@ -28,6 +28,7 @@ def add_inyeccion():
         data = request.get_json()
         monto = data.get("monto")
         descripcion = data.get("descripcion", "")
+        metodo_pago = data.get("metodo_pago", "efectivo")
         fecha = data.get("fecha") or date.today().isoformat()
         sucursal_id = data.get("sucursal_id")
 
@@ -37,24 +38,25 @@ def add_inyeccion():
         with engine.begin() as conn:
             # 1. Insertar en tabla original (inyecciones)
             sql_iny = """
-                INSERT INTO inyecciones (fecha, monto, descripcion, sucursal_id) 
-                VALUES (:fecha, :monto, :descripcion, :sucursal_id)
+                INSERT INTO inyecciones (fecha, monto, descripcion, sucursal_id, metodo_pago)
+                VALUES (:fecha, :monto, :descripcion, :sucursal_id, :metodo_pago)
                 RETURNING id
             """
-            res = conn.execute(text(sql_iny), {"fecha": fecha, "monto": monto, "descripcion": descripcion, "sucursal_id": sucursal_id})
+            res = conn.execute(text(sql_iny), {"fecha": fecha, "monto": monto, "descripcion": descripcion, "sucursal_id": sucursal_id, "metodo_pago": metodo_pago})
             iny_id = res.fetchone()[0]
 
             # 2. Insertar en movimientos_caja
             sql_mov = """
-                INSERT INTO movimientos_caja (fecha, tipo, categoria, monto, descripcion, sucursal_id, referencia_id)
-                VALUES (:fecha, 'entrada', 'inversion', :monto, :descripcion, :sucursal_id, :referencia_id)
+                INSERT INTO movimientos_caja (fecha, tipo, categoria, monto, descripcion, sucursal_id, referencia_id, metodo_pago)
+                VALUES (:fecha, 'entrada', 'inversion', :monto, :descripcion, :sucursal_id, :referencia_id, :metodo_pago)
             """
             conn.execute(text(sql_mov), {
                 "fecha": fecha,
                 "monto": monto,
                 "descripcion": descripcion,
                 "sucursal_id": sucursal_id,
-                "referencia_id": str(iny_id)
+                "referencia_id": str(iny_id),
+                "metodo_pago": metodo_pago
             })
         
         return jsonify({"msg": "Inyección de capital registrada en caja correctamente"}), 201
