@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(psql postgresql://postgres:maDbUALbbAxJzhdqbIcFpvfyGwkYoRsl@crossover.proxy.rlwy.net:53971/railway -c ':*)",
+      "Bash(python -c ':*)",
+      "Bash(DATABASE_PUBLIC_URL=\"postgresql://postgres:vGOwapvdswGkTdEYvZpUogvkSqFVnEnx@maglev.proxy.rlwy.net:53994/railway\" python3 -)",
+      "Read(//c/Users/antojo/AppData/Local/Programs/**)",
+      "Bash(ls /c/Python*)",
+      "Read(//c/Users/antojo/.local/**)",
+      "Bash(py --version)",
+      "Bash(/c/Users/antojo/AppData/Local/Programs/Python/Python*/python.exe --version)",
+      "Bash(py -c \"import sys; print\\(sys.executable\\)\")",
+      "Bash(DATABASE_PUBLIC_URL=\"postgresql://postgres:vGOwapvdswGkTdEYvZpUogvkSqFVnEnx@maglev.proxy.rlwy.net:53994/railway\" py -)",
+      "Bash(/c/Users/antojo/Documents/GitHub/antojo24-backend/backend/.venv/Scripts/python.exe -c ':*)",
+      "Bash(psql \"postgresql://postgres:maDbUALbbAxJzhdqbIcFpvfyGwkYoRsl@crossover.proxy.rlwy.net:53971/railway\" -c \"\\\\d productos_pedido\")",
+      "Bash(psql \"postgresql://postgres:maDbUALbbAxJzhdqbIcFpvfyGwkYoRsl@crossover.proxy.rlwy.net:53971/railway\" -c \"\\\\d inyecciones_capital\")",
+      "Bash(psql \"postgresql://postgres:maDbUALbbAxJzhdqbIcFpvfyGwkYoRsl@crossover.proxy.rlwy.net:53971/railway\" -c \"\\\\dt\")",
+      "Bash(psql \"postgresql://postgres:maDbUALbbAxJzhdqbIcFpvfyGwkYoRsl@crossover.proxy.rlwy.net:53971/railway\" -c \"\\\\d inyecciones\")",
+      "Bash(psql \"postgresql://postgres:vGOwapvdswGkTdEYvZpUogvkSqFVnEnx@maglev.proxy.rlwy.net:53994/railway\" -c \"ALTER TABLE inyecciones ADD COLUMN metodo_pago TEXT DEFAULT 'efectivo';\")",
+      "Bash(python app.py)",
+      "Bash(timeout 5 bash -c 'until curl -s http://localhost:5000/api/dashboard > /dev/null 2>&1; do sleep 1; done && echo \"SERVER UP\"')",
+      "Bash(curl -s http://localhost:5000/api/dashboard)",
+      "Bash(python tests/test_integracion_financiera.py --base-url http://localhost:5000)",
+      "Bash(where python3:*)",
+      "Bash(where py:*)",
+      "Bash(py tests/test_integracion_financiera.py --base-url http://localhost:5000)",
+      "Bash(/c/Users/antojo/AppData/Local/Microsoft/WindowsApps/py.exe tests/test_integracion_financiera.py --base-url http://localhost:5000)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(psql postgresql://postgres:maDbUALbbAxJzhdqbIcFpvfyGwkYoRsl@crossover.proxy.rlwy.net:53971/railway -c ' *)",
+      "Bash(psql \"postgresql://postgres:maDbUALbbAxJzhdqbIcFpvfyGwkYoRsl@crossover.proxy.rlwy.net:53971/railway\" -c \"\\\\d pedidos\" -c \"\\\\d pedido_detalle\" -c \"\\\\d productos\")",
+      "Bash(psql \"postgresql://postgres:maDbUALbbAxJzhdqbIcFpvfyGwkYoRsl@crossover.proxy.rlwy.net:53971/railway\" -c \"SELECT DISTINCT producto FROM pedido_detalle ORDER BY producto;\" -c \"SELECT MIN\\(fecha\\), MAX\\(fecha\\) FROM pedido_detalle;\")",
+      "Bash(psql \"postgresql://postgres:maDbUALbbAxJzhdqbIcFpvfyGwkYoRsl@crossover.proxy.rlwy.net:53971/railway\" -c \"\\\\d productos_pedido\" -c \"SELECT MIN\\(fecha\\), MAX\\(fecha\\), COUNT\\(*\\) FROM pedidos;\" -c \"SELECT COUNT\\(*\\) FROM productos_pedido;\")",
+      "Bash(psql \"postgresql://postgres:maDbUALbbAxJzhdqbIcFpvfyGwkYoRsl@crossover.proxy.rlwy.net:53971/railway\")",
+      "Bash(psql \"postgresql://postgres:maDbUALbbAxJzhdqbIcFpvfyGwkYoRsl@crossover.proxy.rlwy.net:53971/railway\" -c \"\\\\d gastos\" -c \"\\\\d mermas\" -c \"\\\\d inversiones\")",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\antojo\\\\documents\\\\github\\\\antojo24-backend\" -Recurse -Filter \"*.js\" -o Name)"
+    ]
+  }
+}
