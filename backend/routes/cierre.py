@@ -88,51 +88,44 @@ def cierre_caja():
         return jsonify({"message": "Ya existe un cierre para hoy", "error": "Cierre duplicado"}), 409
 
     inicio, fin, _ = get_rango_fecha_panama()
-    print(f"[DEBUG CIERRE] Rango de fechas para ventas: de {inicio} a {fin}")
+    print(f"[DEBUG CIERRE] Rango de fechas: de {inicio} a {fin}")
 
-    # 2. Obtener las ventas del día
-    sql_ventas = "SELECT * FROM productos_pedido WHERE sucursal_id = :sucursal_id AND fecha >= :inicio AND fecha <= :fin"
-    params_ventas = {"sucursal_id": sucursal_id, "inicio": inicio, "fin": fin}
-    print(f"[DEBUG CIERRE] Consultando ventas con params: {params_ventas}")
-    ventas = fetch_all(sql_ventas, params_ventas)
+    # 2. Obtener todos los movimientos de caja del día (ventas + gastos + inyecciones)
+    movimientos = fetch_all(
+        "SELECT tipo, metodo_pago, SUM(monto) as total FROM movimientos_caja WHERE sucursal_id = :sucursal_id AND fecha >= :inicio AND fecha <= :fin GROUP BY tipo, metodo_pago",
+        {"sucursal_id": sucursal_id, "inicio": inicio, "fin": fin}
+    )
 
-    if not ventas:
-        print(f"[DEBUG CIERRE] No se encontraron ventas para el rango. Devolviendo 404.")
-        return jsonify({"error": "No hay ventas registradas hoy"}), 404
+    if not movimientos:
+        print(f"[DEBUG CIERRE] No se encontraron movimientos. Devolviendo 404.")
+        return jsonify({"error": "No hay movimientos registrados hoy"}), 404
 
-    # 3. Agrupar por método de pago y calcular totales
-    totales = {"total_general": 0, "ventas_realizadas": 0}
-    productos = {}
-
-    pedidos_unicos = set()
-
-    for venta in ventas:
-        metodo = venta.get("metodo_pago")
-        total = venta.get("total_item", 0)
-        producto = venta.get("producto")
-        pedido_id = venta.get("pedido_id")
-
-        totales[metodo] = totales.get(metodo, 0) + total
-        totales["total_general"] += total
-
-        if pedido_id not in pedidos_unicos:
-            pedidos_unicos.add(pedido_id)
-            totales["ventas_realizadas"] += 1
-
-        if producto in productos:
-            productos[producto] += venta.get("cantidad", 1)
+    # 3. Calcular neto por método (entradas - salidas)
+    neto = {}
+    entradas_total = 0.0
+    salidas_total = 0.0
+    for m in movimientos:
+        metodo = m.get("metodo_pago") or "otro"
+        monto = float(m.get("total") or 0)
+        if m["tipo"] == "entrada":
+            neto[metodo] = neto.get(metodo, 0) + monto
+            entradas_total += monto
         else:
-            productos[producto] = venta.get("cantidad", 1)
+            neto[metodo] = neto.get(metodo, 0) - monto
+            salidas_total += monto
 
-    # Convertir Decimal a float/int para serialización JSON
-    productos_serializables = {k: float(v) for k, v in productos.items()}
+    # Ventas realizadas (solo para referencia, se sigue contando de pedidos)
+    r_ventas = fetch_all(
+        "SELECT COUNT(DISTINCT pedido_id) as cnt FROM productos_pedido WHERE sucursal_id = :sucursal_id AND fecha >= :inicio AND fecha <= :fin",
+        {"sucursal_id": sucursal_id, "inicio": inicio, "fin": fin}
+    )
+    ventas_realizadas = int(r_ventas[0]["cnt"]) if r_ventas else 0
 
-    # Convertir totales de Decimal a float para consistencia
-    for k, v in totales.items():
-        totales[k] = float(v)
+    totales = {**neto, "total_general": entradas_total - salidas_total, "ventas_realizadas": ventas_realizadas}
+    productos_serializables = {"entradas": round(entradas_total, 2), "salidas": round(salidas_total, 2), **{k: round(v, 2) for k, v in neto.items()}}
 
     print(f"[DEBUG CIERRE] Totales calculados: {totales}")
-    print(f"[DEBUG CIERRE] Productos agrupados: {productos_serializables}")
+    print(f"[DEBUG CIERRE] Desglose: {productos_serializables}")
 
     try:
         total_general = parse_numeric_value(data.get("total_general"), totales["total_general"], "total_general")
@@ -143,16 +136,17 @@ def cierre_caja():
             totales.get("transferencia", 0) + totales.get("yappy", 0),
             "total_transferencia"
         )
-        total_real = parse_numeric_value(data.get("total_real"), total_general, "total_real")
+        total_real = parse_numeric_value(data.get("total_real"), total_efectivo, "total_real")
     except ValueError as parse_error:
         print(f"[DEBUG CIERRE] ERROR PARSE: {parse_error}")
         return jsonify({"error": str(parse_error)}), 400
 
-    if total_real > total_general:
-        sobrante = round(total_real - total_general, 2)
+    # Sobrante/faltante: físico contado vs efectivo esperado
+    if total_real > total_efectivo:
+        sobrante = round(total_real - total_efectivo, 2)
         faltante = 0.0
-    elif total_real < total_general:
-        faltante = round(total_general - total_real, 2)
+    elif total_real < total_efectivo:
+        faltante = round(total_efectivo - total_real, 2)
         sobrante = 0.0
     else:
         sobrante = 0.0
