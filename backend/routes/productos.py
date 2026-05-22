@@ -37,8 +37,8 @@ def create_producto():
         combo_items = json.dumps(data.get("combo_items", []))
         
         sql = """
-            INSERT INTO productos (nombre, precio, precio_delivery, imagen, es_combo, combo_items)
-            VALUES (:nombre, :precio, :precio_delivery, :imagen, :es_combo, :combo_items)
+            INSERT INTO productos (nombre, precio, precio_delivery, imagen, es_combo, combo_items, categoria)
+            VALUES (:nombre, :precio, :precio_delivery, :imagen, :es_combo, :combo_items, :categoria)
             RETURNING id
         """
         params = {
@@ -47,7 +47,8 @@ def create_producto():
             "precio_delivery": data.get("precio_delivery"),
             "imagen": data.get("imagen", ""),
             "es_combo": data.get("es_combo", False),
-            "combo_items": combo_items
+            "combo_items": combo_items,
+            "categoria": data.get("categoria")
         }
         
         # Como execute devuelve rowcount, usamos fetch_one para obtener el ID de retorno
@@ -95,6 +96,9 @@ def update_producto(id):
         if "combo_items" in data:
             updates.append("combo_items = :combo_items")
             params["combo_items"] = json.dumps(data["combo_items"])
+        if "categoria" in data:
+            updates.append("categoria = :categoria")
+            params["categoria"] = data["categoria"]
 
         if not updates:
             return jsonify({"message": "No hay campos válidos para actualizar"}), 400
