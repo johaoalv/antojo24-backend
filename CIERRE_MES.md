@@ -51,6 +51,20 @@ psql "postgresql://postgres:maDbUALbbAxJzhdqbIcFpvfyGwkYoRsl@crossover.proxy.rlw
 - El saldo Yappy al inicio del análisis (14 mayo 2026) era **$150.09**
 - Ajustar este valor según el mes que se trabaje consultando el último saldo del mes anterior
 
+### 🔄 SALDO INICIAL CADA MES (IMPORTANTE)
+**Cada mes arranca el 01 con saldos iniciales:**
+- **Yappy:** $50.00
+- **Efectivo:** $50.00
+
+**Cálculo del saldo final de mes:**
+```
+Saldo final = Saldo inicial ($50) + Neto del mes (ingresos - gastos)
+```
+
+**Ejemplo (Junio 2026):**
+- Yappy: $50 + ($99.00 - $75.88) = $50 + $23.12 = **$73.12**
+- Efectivo: $50 + ($71.75 - $48.46) = $50 + $23.29 = **$73.29**
+
 ---
 
 ## 📊 QUERIES ESENCIALES
@@ -180,11 +194,12 @@ Entrar al banco y anotar el saldo final del mes en la cuenta Yappy de Antojo24.
 
 ### PASO 2 — Obtener saldo sistema
 ```sql
-SELECT ROUND(SUM(CASE WHEN tipo='entrada' THEN monto ELSE -monto END) + SALDO_INICIO, 2)
+SELECT ROUND(SUM(CASE WHEN tipo='entrada' THEN monto ELSE -monto END) + 50.00, 2) AS saldo_yappy
 FROM movimientos_caja
-WHERE metodo_pago='yappy' AND fecha >= 'FECHA_INICIO' AND fecha < 'PRIMER_DIA_MES_SIGUIENTE';
+WHERE metodo_pago='yappy' AND fecha >= '2026-06-01' AND fecha < '2026-07-01';
 ```
-> Reemplazar `SALDO_INICIO` con el saldo Yappy al inicio del período analizado.
+> **IMPORTANTE:** El `+ 50.00` es el saldo inicial que SIEMPRE arranca cada mes (tanto Yappy como efectivo).
+> Para otros meses, cambiar las fechas pero mantener el saldo inicial en $50.00
 
 ### PASO 3 — Calcular diferencia
 ```
@@ -218,13 +233,17 @@ INSERT INTO movimientos_caja (fecha, tipo, monto, descripcion, categoria, metodo
 VALUES ('YYYY-MM-31 23:59:00', 'entrada', DIFERENCIA, 'Ajuste conciliacion Yappy MES YYYY', 'ajuste', 'yappy', 'sucursal_santa_maria');
 ```
 
-### PASO 7 — Verificar cierre en cero
+### PASO 7 — Verificar saldo final del mes
 ```sql
-SELECT ROUND(SUM(CASE WHEN tipo='entrada' THEN monto ELSE -monto END) + SALDO_INICIO, 2) AS saldo_final
+SELECT 
+  metodo_pago,
+  ROUND(SUM(CASE WHEN tipo='entrada' THEN monto ELSE -monto END) + 50.00, 2) AS saldo_final
 FROM movimientos_caja
-WHERE metodo_pago='yappy' AND fecha >= 'FECHA_INICIO' AND fecha < 'PRIMER_DIA_MES_SIGUIENTE';
--- Debe coincidir exactamente con el saldo bancario
+WHERE fecha >= '2026-06-01' AND fecha < '2026-07-01'
+GROUP BY metodo_pago;
 ```
+> El saldo final debe coincidir con lo que tienes en el libro físico.
+> El `+ 50.00` es el saldo inicial de mes que siempre arranca igual.
 
 ### PASO 8 — Generar resumen para libro físico
 Usar los queries de la sección anterior para imprimir o anotar:
@@ -258,6 +277,7 @@ Usar los queries de la sección anterior para imprimir o anotar:
 
 ## 📌 NOTAS PERMANENTES DEL NEGOCIO
 
+- **Saldo inicial cada mes**: Ambos métodos (Yappy y efectivo) arrancan el 01 con **$50.00**
 - **PedidosYa y Uber** liquidan directo al banco, nunca aparecen en Yappy Comercial
 - **T+1**: venta Yappy de hoy llega al banco mañana
 - **Sucursal única activa**: `sucursal_santa_maria`
