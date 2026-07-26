@@ -12,27 +12,65 @@ def pedido():
     data = request.json
     current_app.logger.debug(f"Procesando pedido {data['pedido_id']}")
 
-    # --- Nueva lógica para pagos en efectivo ---
+    # --- Lógica para pagos simples y mixtos ---
     monto_recibido = None
     monto_vuelto = None
     response_data = {"message": "Pedido insertado correctamente"}
+    es_pago_mixto = False
+    metodos_pago_detalles = None
 
-    if data.get("metodo_pago") == "efectivo":
+    # Detectar si es pago mixto o simple
+    metodos_pago_detalles = data.get("metodos_pago_detalles")
+    es_pago_mixto = metodos_pago_detalles and len(metodos_pago_detalles) > 1
+
+    if es_pago_mixto:
         try:
-            monto_recibido = float(data.get("monto_recibido", 0))
             total_pedido = float(data.get("total_pedido", 0))
-            monto_vuelto = monto_recibido - total_pedido
+            suma_montos = sum(float(m.get("monto", 0)) for m in metodos_pago_detalles)
 
-            current_app.logger.info(f"💵 Pago en efectivo detectado.")
-            current_app.logger.info(f"   - Monto recibido: {monto_recibido:.2f}")
-            current_app.logger.info(f"   - Total pedido:   {total_pedido:.2f}")
-            current_app.logger.info(f"   - Vuelto a dar:   {monto_vuelto:.2f}")
+            if abs(suma_montos - total_pedido) > 0.01:
+                return jsonify({"error": f"Suma de pagos ({suma_montos:.2f}) no coincide con total ({total_pedido:.2f})"}), 400
 
-            response_data["monto_vuelto"] = round(monto_vuelto, 2)
+            current_app.logger.info(f"💳 Pago MIXTO detectado: {len(metodos_pago_detalles)} métodos")
+            for m in metodos_pago_detalles:
+                current_app.logger.info(f"   - {m.get('metodo_pago')}: ${m.get('monto'):.2f}")
 
+            # Calcular vuelto solo si hay efectivo en la mezcla
+            for m in metodos_pago_detalles:
+                if m.get("metodo_pago") == "efectivo":
+                    monto_recibido = float(data.get("monto_recibido", m.get("monto")))
+                    monto_en_efectivo = float(m.get("monto", 0))
+                    monto_vuelto = monto_recibido - monto_en_efectivo
+                    current_app.logger.info(f"💵 Vuelto en efectivo: ${monto_vuelto:.2f}")
+                    response_data["monto_vuelto"] = round(monto_vuelto, 2)
+                    break
+
+            response_data["es_pago_mixto"] = True
         except (ValueError, TypeError) as e:
-            current_app.logger.error(f"Error al calcular el vuelto: {e}")
-            return jsonify({"error": "Datos de monto inválidos para pago en efectivo"}), 400
+            current_app.logger.error(f"Error en pago mixto: {e}")
+            return jsonify({"error": "Datos inválidos en metodos_pago_detalles"}), 400
+    else:
+        # Pago simple (comportamiento actual)
+        metodo_pago_principal = data.get("metodo_pago")
+        if metodo_pago_principal == "efectivo":
+            try:
+                monto_recibido = float(data.get("monto_recibido", 0))
+                total_pedido = float(data.get("total_pedido", 0))
+                monto_vuelto = monto_recibido - total_pedido
+
+                current_app.logger.info(f"💵 Pago en efectivo detectado.")
+                current_app.logger.info(f"   - Monto recibido: {monto_recibido:.2f}")
+                current_app.logger.info(f"   - Total pedido:   {total_pedido:.2f}")
+                current_app.logger.info(f"   - Vuelto a dar:   {monto_vuelto:.2f}")
+
+                response_data["monto_vuelto"] = round(monto_vuelto, 2)
+
+            except (ValueError, TypeError) as e:
+                current_app.logger.error(f"Error al calcular el vuelto: {e}")
+                return jsonify({"error": "Datos de monto inválidos para pago en efectivo"}), 400
+
+        # Convertir pago simple a formato de detalles para unificar la lógica
+        metodos_pago_detalles = [{"metodo_pago": metodo_pago_principal, "monto": data.get("total_pedido")}]
 
     try:
         # Pre-validación de stock usando un diccionario para consolidar insumos
@@ -138,6 +176,12 @@ def pedido():
         # Procesar el pedido en una transacción
         with engine.begin() as conn:
             # 1. Insertar el pedido principal con costo_total
+            # Para pago mixto, guardar el método principal (el primero o el de mayor monto)
+            if es_pago_mixto:
+                metodo_principal = max(metodos_pago_detalles, key=lambda x: float(x.get("monto", 0))).get("metodo_pago")
+            else:
+                metodo_principal = data.get("metodo_pago")
+
             sql_pedido = """
                 INSERT INTO pedidos (pedido_id, total_pedido, metodo_pago, sucursal_id, fecha, monto_recibido, monto_vuelto, costo_total, tipo_pedido, estado_pago)
                 VALUES (:pedido_id, :total_pedido, :metodo_pago, :sucursal_id, :fecha, :monto_recibido, :monto_vuelto, :costo_total, :tipo_pedido, :estado_pago)
@@ -145,7 +189,7 @@ def pedido():
             params_pedido = {
                 "pedido_id": data["pedido_id"],
                 "total_pedido": data["total_pedido"],
-                "metodo_pago": data["metodo_pago"],
+                "metodo_pago": metodo_principal,
                 "sucursal_id": data["sucursal_id"],
                 "fecha": data["fecha"],
                 "monto_recibido": monto_recibido,
@@ -161,7 +205,7 @@ def pedido():
                 INSERT INTO productos_pedido (pedido_id, producto, cantidad, total_item, metodo_pago, sucursal_id, fecha, costo_unitario, producto_id)
                 VALUES (:pedido_id, :producto, :cantidad, :total_item, :metodo_pago, :sucursal_id, :fecha, :costo_unitario, :producto_id)
             """
-            
+
             for item in data["pedido"]:
                 # Obtener producto_id
                 item_name = item["producto"].lower()
@@ -184,7 +228,7 @@ def pedido():
                     "producto": item["producto"],
                     "cantidad": item["cantidad"],
                     "total_item": item["total_item"],
-                    "metodo_pago": data["metodo_pago"],
+                    "metodo_pago": metodo_principal,
                     "sucursal_id": data["sucursal_id"],
                     "fecha": data["fecha"],
                     "costo_unitario": costo_u,
@@ -194,18 +238,38 @@ def pedido():
             # 3. Registrar el MOVIMIENTO DE CAJA (Solo si el pago ya fue recibido)
             estado_pago = data.get("estado_pago", "pagado")
             if estado_pago != "pendiente":
-                sql_movimiento = """
-                    INSERT INTO movimientos_caja (fecha, tipo, categoria, monto, descripcion, sucursal_id, referencia_id, metodo_pago)
-                    VALUES (:fecha, 'entrada', 'venta', :monto, :descripcion, :sucursal_id, :referencia_id, :metodo_pago)
-                """
-                conn.execute(text(sql_movimiento), {
-                    "fecha": data["fecha"],
-                    "monto": data["total_pedido"],
-                    "descripcion": f"Venta registrada - ID: {data['pedido_id']}",
-                    "sucursal_id": data["sucursal_id"],
-                    "referencia_id": data["pedido_id"],
-                    "metodo_pago": data["metodo_pago"]
-                })
+                # Si es pago mixto, insertar un registro por cada método
+                if es_pago_mixto:
+                    sql_movimiento = """
+                        INSERT INTO movimientos_caja (fecha, tipo, categoria, monto, descripcion, sucursal_id, referencia_id, metodo_pago)
+                        VALUES (:fecha, 'entrada', 'venta', :monto, :descripcion, :sucursal_id, :referencia_id, :metodo_pago)
+                    """
+                    for m in metodos_pago_detalles:
+                        monto_metodo = float(m.get("monto", 0))
+                        metodo = m.get("metodo_pago")
+                        conn.execute(text(sql_movimiento), {
+                            "fecha": data["fecha"],
+                            "monto": monto_metodo,
+                            "descripcion": f"Venta registrada (MIXTO) - ID: {data['pedido_id']}",
+                            "sucursal_id": data["sucursal_id"],
+                            "referencia_id": data["pedido_id"],
+                            "metodo_pago": metodo
+                        })
+                        current_app.logger.info(f"   ✓ Movimiento caja: {metodo} ${monto_metodo:.2f} (ref: {data['pedido_id']})")
+                else:
+                    # Pago simple: insertar un registro único
+                    sql_movimiento = """
+                        INSERT INTO movimientos_caja (fecha, tipo, categoria, monto, descripcion, sucursal_id, referencia_id, metodo_pago)
+                        VALUES (:fecha, 'entrada', 'venta', :monto, :descripcion, :sucursal_id, :referencia_id, :metodo_pago)
+                    """
+                    conn.execute(text(sql_movimiento), {
+                        "fecha": data["fecha"],
+                        "monto": data["total_pedido"],
+                        "descripcion": f"Venta registrada - ID: {data['pedido_id']}",
+                        "sucursal_id": data["sucursal_id"],
+                        "referencia_id": data["pedido_id"],
+                        "metodo_pago": metodo_principal
+                    })
             else:
                 current_app.logger.info(f"⏳ Pedido {data['pedido_id']} pendiente de pago (delivery). Movimiento de caja diferido.")
             
