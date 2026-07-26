@@ -189,8 +189,10 @@ ORDER BY DATE_TRUNC('month', fecha);
 
 ## ✅ PROCESO PASO A PASO: CIERRE DE MES
 
-### PASO 1 — Obtener saldo bancario real
-Entrar al banco y anotar el saldo final del mes en la cuenta Yappy de Antojo24.
+### PASO 1 — Obtener saldo bancario real y extracto del mes
+1. Entrar al banco y anotar el saldo final del mes en la cuenta Yappy de Antojo24.
+2. **OBLIGATORIO:** Descargar el extracto bancario del mes (.xlsx) de la cuenta operativa Yappy. Este documento es indispensable para identificar las **comisiones bancarias Yappy** (líneas `COMISION TRANSACCIONES YAPPY Antojo24`) que NO se registran automáticamente y deben sumarse al cierre.
+3. Sumar todas las comisiones del mes — ese total se registra como salida en el PASO 6.
 
 ### PASO 2 — Obtener saldo sistema
 ```sql
@@ -227,10 +229,19 @@ VALUES ('YYYY-MM-DD HH:MM:SS', 'salida', MONTO, 'Descripcion del ajuste', 'ajust
 ```
 
 ### PASO 6 — Ajuste general de cierre
-Si queda una diferencia menor (< $2.00) de origen no identificable (comisiones, redondeos):
+
+**6.1 Comisiones bancarias Yappy del mes (OBLIGATORIO):**
+Tomar el total de comisiones del extracto bancario (PASO 1) e insertar como salida:
 ```sql
 INSERT INTO movimientos_caja (fecha, tipo, monto, descripcion, categoria, metodo_pago, sucursal_id)
-VALUES ('YYYY-MM-31 23:59:00', 'entrada', DIFERENCIA, 'Ajuste conciliacion Yappy MES YYYY', 'ajuste', 'yappy', 'sucursal_santa_maria');
+VALUES ('YYYY-MM-30 23:59:00', 'salida', TOTAL_COMISIONES, 'Ajuste cierre: comisiones bancarias Yappy MES YYYY', 'ajuste', 'yappy', 'sucursal_santa_maria');
+```
+
+**6.2 Diferencia residual (si aplica):**
+Si queda una diferencia menor (< $2.00) de origen no identificable (redondeos, fees menores):
+```sql
+INSERT INTO movimientos_caja (fecha, tipo, monto, descripcion, categoria, metodo_pago, sucursal_id)
+VALUES ('YYYY-MM-30 23:59:00', 'entrada', DIFERENCIA, 'Ajuste conciliacion Yappy MES YYYY', 'ajuste', 'yappy', 'sucursal_santa_maria');
 ```
 
 ### PASO 7 — Verificar saldo final del mes
@@ -273,6 +284,12 @@ Usar los queries de la sección anterior para imprimir o anotar:
 | 634 | 31/05/2026 | entrada | $1.20 | Corrección Fortunato 11/5 | Cobrado $43.80, registrado $45.00 |
 | 637 | 31/05/2026 | entrada | $1.26 | Ajuste conciliación Yappy mayo 2026 | Diferencia residual (comisiones + redondeos) |
 
+## 📋 HISTORIAL DE AJUSTES JUNIO 2026 (pendiente — programado 30/06)
+
+| Fecha | Tipo | Monto | Descripción | Motivo |
+|---|---|---|---|---|
+| 30/06/2026 | salida | $12.80 | Ajuste comisiones bancarias Yappy: $2.58 junio + $10.22 acumulado feb-may | Conciliación con extracto bancario. Inaugura política de registrar comisiones cada cierre. |
+
 ---
 
 ## 📌 NOTAS PERMANENTES DEL NEGOCIO
@@ -285,3 +302,5 @@ Usar los queries de la sección anterior para imprimir o anotar:
 - **Categorías de gastos**: `inventario`, `personal`, `ajuste`, `otro`
 - **Categorías de ingresos**: `venta`, `ajuste`
 - Nunca borrar movimientos — siempre hacer asiento de corrección (el libro físico ya quedó escrito)
+- **Comisiones bancarias Yappy**: El banco cobra una pequeña comisión por cada depósito Yappy (~$0.02–$0.42 por movimiento). NUNCA se registran automáticamente en el sistema. **OBLIGATORIO al cierre de mes:** descargar el extracto bancario, sumar todas las líneas `COMISION TRANSACCIONES YAPPY Antojo24` y registrarlas como una salida única de ajuste el último día del mes.
+- **Cuenta de fondos antojo (04-72-00-821887-0)**: Cuenta de ahorros separada donde se depositan los excedentes al cierre de mes (todo lo que sobre de $50 en yappy + $50 en efectivo). Estas transferencias son implícitas al diseño del sistema (que reinicia en $50 cada mes) y NO requieren asiento. Si en el futuro se quiere visibilidad dentro del sistema, habría que agregar un `metodo_pago='fondos'`.
