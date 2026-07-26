@@ -114,7 +114,7 @@ def get_dashboard():
 
         utilidad_acumulada_total = hist_ventas - hist_cogs - hist_gastos_op - hist_mermas
 
-        # Caja Real Acumulada (Toda la historia / Plata Real)
+        # Caja Real Acumulada (Toda la historia / Tesorería)
         sql_caja_total = f"SELECT SUM(CASE WHEN tipo = 'entrada' THEN monto ELSE -monto END) as saldo FROM movimientos_caja {where_global}"
         res_caja_total = fetch_one(sql_caja_total, params_global)
         saldo_caja_total_historico = to_number(res_caja_total.get("saldo", 0))
