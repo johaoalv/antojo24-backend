@@ -57,18 +57,18 @@ def get_dashboard():
         ventas_mes = to_number(res_ventas_mes.get("total", 0))
         cogs_mes = to_number(res_ventas_mes.get("cogs", 0))
 
-        # Gastos Operativos (salida / operativo)
-        sql_gastos_op = f"SELECT SUM(monto) as total FROM movimientos_caja {where_mes} AND tipo = 'salida' AND categoria = 'operativo'"
+        # Gastos Operativos (salida / operativo, excluyendo pagos con fondos de tesorería)
+        sql_gastos_op = f"SELECT SUM(monto) as total FROM movimientos_caja {where_mes} AND tipo = 'salida' AND categoria = 'operativo' AND metodo_pago != 'fondos'"
         res_gastos_op = fetch_one(sql_gastos_op, params_mes)
         gastos_operativos = to_number(res_gastos_op.get("total", 0))
 
-        # Compras de Inventario (salida / inventario)
-        sql_gastos_inv_compras = f"SELECT SUM(monto) as total FROM movimientos_caja {where_mes} AND tipo = 'salida' AND categoria = 'inventario'"
+        # Compras de Inventario (salida / inventario, excluyendo pagos con fondos de tesorería)
+        sql_gastos_inv_compras = f"SELECT SUM(monto) as total FROM movimientos_caja {where_mes} AND tipo = 'salida' AND categoria = 'inventario' AND metodo_pago != 'fondos'"
         res_gastos_inv_compras = fetch_one(sql_gastos_inv_compras, params_mes)
         compras_inventario = to_number(res_gastos_inv_compras.get("total", 0))
 
-        # Inversiones (salida / inversion) - Nota: a veces inversion es entrada, pero aqui buscamos el gasto de inversion si aplica
-        sql_gastos_inv = f"SELECT SUM(monto) as total FROM movimientos_caja {where_mes} AND tipo = 'salida' AND categoria = 'inversion'"
+        # Inversiones (salida / inversion) pagadas con plata del mes - Nota: a veces inversion es entrada, pero aqui buscamos el gasto de inversion si aplica
+        sql_gastos_inv = f"SELECT SUM(monto) as total FROM movimientos_caja {where_mes} AND tipo = 'salida' AND categoria = 'inversion' AND metodo_pago != 'fondos'"
         res_gastos_inv = fetch_one(sql_gastos_inv, params_mes)
         inversiones_mes = to_number(res_gastos_inv.get("total", 0))
 
@@ -76,6 +76,11 @@ def get_dashboard():
         sql_iny_mes = f"SELECT SUM(monto) as total FROM movimientos_caja {where_mes} AND tipo = 'entrada' AND categoria = 'inversion'"
         res_iny_mes = fetch_one(sql_iny_mes, params_mes)
         inyecciones_mes = to_number(res_iny_mes.get("total", 0))
+
+        # Gastos pagados con Fondos de Tesorería (fuera de las métricas del mes, solo informativo)
+        sql_gastos_fondos = f"SELECT SUM(monto) as total FROM movimientos_caja {where_mes} AND tipo = 'salida' AND metodo_pago = 'fondos'"
+        res_gastos_fondos = fetch_one(sql_gastos_fondos, params_mes)
+        gastos_fondos_mes = to_number(res_gastos_fondos.get("total", 0))
 
         # Mermas del mes (estas no son movimientos de caja físicos, son pérdida de valor de inventario)
         sql_merma_mes = f"""
@@ -122,8 +127,8 @@ def get_dashboard():
         # --- LOGICA FINANCIERA DEL MES (Ya existente) ---
         ganancia_neta_mes = ventas_mes - cogs_mes - gastos_operativos - mermas_mes
 
-        # Caja del MES (Solo flujo del período actual)
-        sql_caja_mes = f"SELECT SUM(CASE WHEN tipo = 'entrada' THEN monto ELSE -monto END) as saldo FROM movimientos_caja {where_mes}"
+        # Caja del MES (Solo flujo del período actual, excluyendo movimientos pagados con Fondos de Tesorería)
+        sql_caja_mes = f"SELECT SUM(CASE WHEN tipo = 'entrada' THEN monto ELSE -monto END) as saldo FROM movimientos_caja {where_mes} AND metodo_pago != 'fondos'"
         res_caja_mes = fetch_one(sql_caja_mes, params_mes)
         saldo_caja_mes = to_number(res_caja_mes.get("saldo", 0))
 
@@ -200,6 +205,7 @@ def get_dashboard():
                 "inversiones": round(inversiones_mes, 2),
                 "mermas": round(mermas_mes, 2),
                 "inyecciones": round(inyecciones_mes, 2),
+                "gastos_fondos": round(gastos_fondos_mes, 2),
                 "ganancia_neta": round(ganancia_neta_mes, 2),
                 "saldo_caja": round(saldo_caja_total_historico, 2),
                 "saldo_caja_mes": round(saldo_caja_mes, 2),
