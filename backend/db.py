@@ -16,7 +16,7 @@ connect_args = {}
 if "localhost" not in DATABASE_PUBLIC_URL and "127.0.0.1" not in DATABASE_PUBLIC_URL:
     connect_args = {"sslmode": "require"}
 
-engine = create_engine(DATABASE_PUBLIC_URL, pool_pre_ping=True, connect_args=connect_args or {})
+engine = create_engine(DATABASE_PUBLIC_URL, pool_pre_ping=False, pool_recycle=1800, connect_args=connect_args or {})
 SessionLocal = scoped_session(sessionmaker(autocommit=False, autoflush=False, bind=engine))
 
 def get_db():

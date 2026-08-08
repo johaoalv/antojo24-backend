@@ -83,13 +83,17 @@ ORDER BY ingresos DESC;
 ```
 
 ### 2. Totales generales del mes
+> ⚠️ Excluye `metodo_pago='fondos'` — esos movimientos son compras grandes pagadas con la
+> cuenta de Fondos Antojo24 (tesorería), no plata real del mes. Si se incluyen aquí, la
+> utilidad neta y la conciliación bancaria del mes salen mal. Ver query #4.1 para verlos aparte.
 ```sql
 SELECT 
   SUM(CASE WHEN tipo='entrada' THEN monto ELSE 0 END) AS total_ingresos,
   SUM(CASE WHEN tipo='salida' THEN monto ELSE 0 END) AS total_gastos,
   SUM(CASE WHEN tipo='entrada' THEN monto ELSE -monto END) AS utilidad_neta
 FROM movimientos_caja
-WHERE fecha >= '2026-MM-01' AND fecha < '2026-MM+1-01';
+WHERE fecha >= '2026-MM-01' AND fecha < '2026-MM+1-01'
+  AND metodo_pago != 'fondos';
 ```
 
 ### 3. Balance corriente Yappy (para conciliación)
@@ -107,12 +111,23 @@ ORDER BY dia;
 ```
 
 ### 4. Gastos por categoría
+> ⚠️ Excluye `metodo_pago='fondos'` por la misma razón que la query #2.
 ```sql
 SELECT categoria, SUM(monto) AS total
 FROM movimientos_caja
 WHERE tipo='salida' AND fecha >= '2026-MM-01' AND fecha < '2026-MM+1-01'
+  AND metodo_pago != 'fondos'
 GROUP BY categoria
 ORDER BY total DESC;
+```
+
+### 4.1 Gastos pagados con Fondos del mes (informativo, aparte de la conciliación)
+```sql
+SELECT fecha::date, categoria, descripcion, monto
+FROM movimientos_caja
+WHERE tipo='salida' AND metodo_pago='fondos'
+  AND fecha >= '2026-MM-01' AND fecha < '2026-MM+1-01'
+ORDER BY fecha;
 ```
 
 ### 5. Ventas por día de la semana
@@ -245,16 +260,21 @@ VALUES ('YYYY-MM-30 23:59:00', 'entrada', DIFERENCIA, 'Ajuste conciliacion Yappy
 ```
 
 ### PASO 7 — Verificar saldo final del mes
+> ⚠️ El `+ 50.00` SOLO aplica a `yappy` y `efectivo` (el saldo inicial fijo del mes). Si se
+> agrupara sin filtrar, un mes con compras pagadas por `metodo_pago='fondos'` sumaría un
+> `+50.00` que no le corresponde a esa cuenta.
 ```sql
 SELECT 
   metodo_pago,
   ROUND(SUM(CASE WHEN tipo='entrada' THEN monto ELSE -monto END) + 50.00, 2) AS saldo_final
 FROM movimientos_caja
 WHERE fecha >= '2026-06-01' AND fecha < '2026-07-01'
+  AND metodo_pago IN ('yappy', 'efectivo')
 GROUP BY metodo_pago;
 ```
 > El saldo final debe coincidir con lo que tienes en el libro físico.
 > El `+ 50.00` es el saldo inicial de mes que siempre arranca igual.
+> Para ver cuánto se gastó del fondo ese mes (sin baseline de $50), usar la query #4.1.
 
 ### PASO 8 — Generar resumen para libro físico
 Usar los queries de la sección anterior para imprimir o anotar:
@@ -298,9 +318,12 @@ Usar los queries de la sección anterior para imprimir o anotar:
 - **PedidosYa y Uber** liquidan directo al banco, nunca aparecen en Yappy Comercial
 - **T+1**: venta Yappy de hoy llega al banco mañana
 - **Sucursal única activa**: `sucursal_santa_maria`
-- **Métodos de pago activos**: `yappy`, `efectivo`
+- **Métodos de pago activos**: `yappy`, `efectivo` (plata del mes) y `fondos` (gastos pagados desde la cuenta de Fondos Antojo24 — ver nota abajo)
 - **Categorías de gastos**: `inventario`, `personal`, `ajuste`, `otro`
 - **Categorías de ingresos**: `venta`, `ajuste`
 - Nunca borrar movimientos — siempre hacer asiento de corrección (el libro físico ya quedó escrito)
 - **Comisiones bancarias Yappy**: El banco cobra una pequeña comisión por cada depósito Yappy (~$0.02–$0.42 por movimiento). NUNCA se registran automáticamente en el sistema. **OBLIGATORIO al cierre de mes:** descargar el extracto bancario, sumar todas las líneas `COMISION TRANSACCIONES YAPPY Antojo24` y registrarlas como una salida única de ajuste el último día del mes.
-- **Cuenta de fondos antojo (04-72-00-821887-0)**: Cuenta de ahorros separada donde se depositan los excedentes al cierre de mes (todo lo que sobre de $50 en yappy + $50 en efectivo). Estas transferencias son implícitas al diseño del sistema (que reinicia en $50 cada mes) y NO requieren asiento. Si en el futuro se quiere visibilidad dentro del sistema, habría que agregar un `metodo_pago='fondos'`.
+- **Cuenta de fondos antojo (04-72-00-821887-0)**: Cuenta de ahorros separada donde se depositan los excedentes al cierre de mes (todo lo que sobre de $50 en yappy + $50 en efectivo). La transferencia de excedentes hacia el fondo sigue siendo implícita (NO requiere asiento). Lo que **sí tiene visibilidad en el sistema (implementado agosto 2026)** es el camino inverso: cuando se compra algo grande (>$300 típicamente) pagando *desde* el fondo, ese gasto se registra en `/api/gastos` con `metodo_pago='fondos'`.
+  - Se ve en el listado de Gastos y en el Libro de Caja con su propio tag, pero **no** afecta `saldo_yappy` / `saldo_efectivo` ni la utilidad/flujo de caja del mes en el dashboard.
+  - Sí resta de la card "Tesorería" (saldo histórico acumulado), porque es plata real que salió del negocio.
+  - Al correr las queries manuales de cierre de mes de este documento, filtrar/excluir `metodo_pago='fondos'` (ya viene indicado en cada query afectada) para no mezclarlo con la conciliación bancaria de yappy/efectivo.
