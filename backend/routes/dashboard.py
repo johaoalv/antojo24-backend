@@ -19,6 +19,12 @@ def fecha_solo(f):
         return ""
     return str(f)[:10]
 
+def primer_dia_mes_menos(fecha, n):
+    """Primer día del mes que está `n` meses antes del mes de `fecha`."""
+    total = fecha.year * 12 + (fecha.month - 1) - n
+    anio, mes = divmod(total, 12)
+    return date(anio, mes + 1, 1)
+
 dashboard_bp = Blueprint("dashboard", __name__)
 
 # Caché en memoria de meses cerrados de historial_mensual, por sucursal (clave: "global" o sucursal_id).
@@ -116,28 +122,42 @@ def get_dashboard():
 
         # --- HISTORIAL MENSUAL (mes actual en vivo + meses cerrados desde caché diaria) ---
         mes_actual_str = hoy.strftime("%Y-%m")
-        inicio_12_meses = (hoy - timedelta(days=365)).isoformat()
-        sucursal_cache_key = "global" if is_global else s_id_filter
+
+        # Cantidad de meses de historial a devolver (incluye el mes actual). Configurable vía
+        # query param para no forzar siempre 12 meses; por defecto 3 si el cliente no lo envía.
+        meses_param_raw = request.args.get("meses_historial") or request.args.get("meses")
+        try:
+            meses_historial = int(meses_param_raw) if meses_param_raw is not None else 3
+        except (TypeError, ValueError):
+            meses_historial = 3
+        meses_historial = min(max(meses_historial, 1), 24)
+        meses_cerrados_necesarios = meses_historial - 1
+
+        sucursal_cache_key = f"{'global' if is_global else s_id_filter}:{meses_historial}"
         hoy_str = hoy.isoformat()
 
         cache_entry = _historial_mensual_cache.get(sucursal_cache_key)
         if cache_entry and cache_entry["fecha"] == hoy_str:
             meses_cerrados = cache_entry["meses"]
+        elif meses_cerrados_necesarios <= 0:
+            meses_cerrados = []
+            _historial_mensual_cache[sucursal_cache_key] = {"fecha": hoy_str, "meses": meses_cerrados}
         else:
-            where_cerrados = "WHERE fecha < :inicio_mes AND fecha >= :inicio_12_meses" + (" AND sucursal_id = :s_id" if not is_global else "")
-            params_cerrados = {"inicio_mes": inicio_mes, "inicio_12_meses": inicio_12_meses}
+            inicio_rango_historial = primer_dia_mes_menos(hoy, meses_cerrados_necesarios).isoformat()
+            where_cerrados = "WHERE fecha < :inicio_mes AND fecha >= :inicio_rango" + (" AND sucursal_id = :s_id" if not is_global else "")
+            params_cerrados = {"inicio_mes": inicio_mes, "inicio_rango": inicio_rango_historial, "limite": meses_cerrados_necesarios}
             if not is_global:
                 params_cerrados["s_id"] = s_id_filter
 
             sql_meses_cerrados = f"""
                 SELECT
-                    SUBSTR(fecha::text, 1, 7) as mes,
+                    TO_CHAR(fecha, 'YYYY-MM') as mes,
                     SUM(total_pedido) as total_ventas
                 FROM pedidos
                 {where_cerrados}
                 GROUP BY mes
                 ORDER BY mes DESC
-                LIMIT 11
+                LIMIT :limite
             """
             meses_cerrados = [
                 {**h, "total_ventas": to_number(h["total_ventas"])}
@@ -160,7 +180,7 @@ def get_dashboard():
 
         sql_historial_diario = f"""
             SELECT
-                SUBSTR(fecha::text, 1, 10) as dia,
+                TO_CHAR(fecha, 'YYYY-MM-DD') as dia,
                 SUM(total_pedido) as total_ventas
             FROM pedidos
             {where_15_dias}
@@ -247,7 +267,7 @@ def get_historial_diario_mes():
 
         sql_dias_del_mes = f"""
             SELECT
-                SUBSTR(fecha::text, 1, 10) as dia,
+                TO_CHAR(fecha, 'YYYY-MM-DD') as dia,
                 SUM(total_pedido) as total_ventas
             FROM pedidos
             {where_rango_mes}
