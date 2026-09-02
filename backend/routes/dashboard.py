@@ -171,6 +171,36 @@ def get_dashboard():
             [{"mes": mes_actual_str, "total_ventas": ventas_mes}] + meses_cerrados
         )
 
+        # --- RENTABILIDAD MENSUAL (últimos 3 meses, solo flujo operativo) ---
+        inicio_rentabilidad = primer_dia_mes_menos(hoy, 2).isoformat()
+        where_rentabilidad = "WHERE fecha >= :inicio_rentabilidad" + (" AND sucursal_id = :s_id" if not is_global else "")
+        params_rentabilidad = {"inicio_rentabilidad": inicio_rentabilidad}
+        if not is_global:
+            params_rentabilidad["s_id"] = s_id_filter
+
+        sql_rentabilidad_mensual = f"""
+            SELECT
+                TO_CHAR(fecha, 'YYYY-MM') AS mes,
+                COALESCE(SUM(CASE WHEN tipo = 'entrada' THEN monto ELSE 0 END), 0) AS ingresos,
+                COALESCE(SUM(CASE WHEN tipo = 'salida' THEN monto ELSE 0 END), 0) AS gastos,
+                COALESCE(SUM(CASE WHEN tipo = 'entrada' THEN monto ELSE -monto END), 0) AS utilidad_neta
+            FROM movimientos_caja
+            {where_rentabilidad} AND metodo_pago IS DISTINCT FROM 'fondos'
+            GROUP BY mes
+            ORDER BY mes DESC
+        """
+        rentabilidad_mensual = []
+        for fila in fetch_all(sql_rentabilidad_mensual, params_rentabilidad):
+            ingresos = to_number(fila["ingresos"])
+            utilidad_neta = to_number(fila["utilidad_neta"])
+            rentabilidad_mensual.append({
+                "mes": fila["mes"],
+                "ingresos": round(ingresos, 2),
+                "gastos": round(to_number(fila["gastos"]), 2),
+                "utilidad_neta": round(utilidad_neta, 2),
+                "rentabilidad_pct": round(utilidad_neta / ingresos * 100, 1) if ingresos else 0,
+            })
+
         # --- HISTORIAL DIARIO (últimos 15 días) ---
         inicio_15_dias = (hoy - timedelta(days=15)).isoformat()
         where_15_dias = "WHERE fecha >= :inicio_15_dias" + (" AND sucursal_id = :s_id" if not is_global else "")
@@ -210,6 +240,7 @@ def get_dashboard():
                 "gastos_por_metodo": gastos_por_metodo
             },
             "historial_mensual": historial_mensual,
+            "rentabilidad_mensual": rentabilidad_mensual,
             "historial_diario": historial_diario,
             "total_ventas": round(ventas_mes, 2),
             "total_invertido": round(gastos_operativos + inversiones_mes + compras_inventario, 2),
