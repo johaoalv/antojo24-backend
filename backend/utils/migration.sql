@@ -1,3 +1,6 @@
+-- Disponibilidad global de productos (activos por defecto).
+ALTER TABLE productos ADD COLUMN IF NOT EXISTS disponible BOOLEAN NOT NULL DEFAULT TRUE;
+
 -- 1. Crear tabla de insumos
 CREATE TABLE IF NOT EXISTS insumos (
     id SERIAL PRIMARY KEY,

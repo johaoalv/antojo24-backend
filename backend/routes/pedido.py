@@ -86,6 +86,15 @@ def pedido():
                 if cantidad_vendida <= 0:
                     continue
 
+                disponible = conn.execute(
+                    text("SELECT disponible FROM productos WHERE LOWER(nombre) = :producto"),
+                    {"producto": producto_nombre},
+                ).scalar()
+                if disponible is False:
+                    return jsonify({
+                        "error": f"El producto '{item.get('producto')}' ya no está disponible"
+                    }), 409
+
                 # DESCOMPONER COMBOS EN PRODUCTOS BASE
                 sql_prod = "SELECT es_combo, combo_items FROM productos WHERE LOWER(nombre) = :producto"
                 prod = conn.execute(text(sql_prod), {"producto": producto_nombre}).mappings().first()
