@@ -1,5 +1,6 @@
 from flask import Blueprint, jsonify, request
 from db import fetch_all, fetch_one, execute, insert_many
+from socket_instance import socketio
 import logging
 
 productos_bp = Blueprint("productos", __name__, url_prefix="/api/productos")
@@ -37,8 +38,8 @@ def create_producto():
         combo_items = json.dumps(data.get("combo_items", []))
         
         sql = """
-            INSERT INTO productos (nombre, precio, precio_delivery, imagen, es_combo, combo_items, categoria)
-            VALUES (:nombre, :precio, :precio_delivery, :imagen, :es_combo, :combo_items, :categoria)
+            INSERT INTO productos (nombre, precio, precio_delivery, imagen, es_combo, combo_items, categoria, disponible)
+            VALUES (:nombre, :precio, :precio_delivery, :imagen, :es_combo, :combo_items, :categoria, :disponible)
             RETURNING id
         """
         params = {
@@ -48,7 +49,8 @@ def create_producto():
             "imagen": data.get("imagen", ""),
             "es_combo": data.get("es_combo", False),
             "combo_items": combo_items,
-            "categoria": data.get("categoria")
+            "categoria": data.get("categoria"),
+            "disponible": data.get("disponible", True)
         }
         
         # Como execute devuelve rowcount, usamos fetch_one para obtener el ID de retorno
@@ -99,12 +101,18 @@ def update_producto(id):
         if "categoria" in data:
             updates.append("categoria = :categoria")
             params["categoria"] = data["categoria"]
+        if "disponible" in data:
+            updates.append("disponible = :disponible")
+            params["disponible"] = bool(data["disponible"])
 
         if not updates:
             return jsonify({"message": "No hay campos válidos para actualizar"}), 400
 
         sql = f"UPDATE productos SET {', '.join(updates)} WHERE id = :id"
         execute(sql, params)
+        producto_actualizado = fetch_one("SELECT * FROM productos WHERE id = :id", {"id": id})
+        # Use the REST JSON conversion for PostgreSQL Decimal prices.
+        socketio.emit("product_updated", jsonify(producto_actualizado).get_json())
         
         return jsonify({"message": "Producto actualizado exitosamente"}), 200
         
