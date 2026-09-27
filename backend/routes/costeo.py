@@ -5,7 +5,7 @@ from utils.costeo_combos import incluir_costeo_combos
 costeo_bp = Blueprint("costeo", __name__)
 
 def obtener_costeos():
-    # Consulta para obtener el costo total de cada producto sumando sus ingredientes
+    # Solo costear productos existentes; las recetas de productos borrados se conservan.
     sql = """
         SELECT
             r.producto,
@@ -23,7 +23,7 @@ def obtener_costeos():
             )) as ingredientes
         FROM recetas r
         JOIN insumos i ON r.insumo_id = i.id
-        LEFT JOIN productos p ON LOWER(p.nombre) = LOWER(r.producto)
+        JOIN productos p ON LOWER(p.nombre) = LOWER(r.producto)
         GROUP BY r.producto, p.precio, p.precio_delivery
         ORDER BY r.producto ASC
     """
