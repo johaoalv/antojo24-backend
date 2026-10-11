@@ -1,5 +1,8 @@
 # Plan: registrar compras desde una foto de factura
 
+> **Credenciales de la BDD:** buscar el valor `DATABASE_PUBLIC_URL_MAIN` en el archivo `.env` de la raíz del proyecto. No publicar su valor ni contraseñas en este documento.
+
+
 Estado: propuesta para implementación. No implementado.
 Fecha: 26 de septiembre de 2026.
 

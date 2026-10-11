@@ -1,35 +1,28 @@
 from flask import Blueprint, request, jsonify, current_app
-from db import fetch_all
-from utils.costeo_combos import incluir_costeo_combos
 
 costeo_bp = Blueprint("costeo", __name__)
 
 def obtener_costeos():
-    # Solo costear productos existentes; las recetas de productos borrados se conservan.
-    sql = """
-        SELECT
-            r.producto,
-            SUM(r.cantidad_requerida * i.costo_unidad) as costo_total,
-            p.precio,
-            p.precio_delivery,
-            json_agg(json_build_object(
-                'insumo_id', i.id,
-                'nombre_insumo', i.nombre,
-                'cantidad', r.cantidad_requerida,
-                'unidad', i.unidad_medida,
-                'costo_unitario', i.costo_unidad,
-                'subtotal', r.cantidad_requerida * i.costo_unidad,
-                'stock', i.stock
-            )) as ingredientes
-        FROM recetas r
-        JOIN insumos i ON r.insumo_id = i.id
-        JOIN productos p ON LOWER(p.nombre) = LOWER(r.producto)
-        GROUP BY r.producto, p.precio, p.precio_delivery
-        ORDER BY r.producto ASC
-    """
-    resultados = fetch_all(sql)
-    productos = fetch_all("SELECT id, nombre, precio, precio_delivery, es_combo, combo_items FROM productos")
-    return incluir_costeo_combos(resultados, productos)
+    from db import engine
+    from utils.consumos import CatalogoConsumos
+    from decimal import Decimal
+    with engine.connect() as conn:
+        catalogo = CatalogoConsumos(conn)
+        resultados = []
+        for p in catalogo.productos.values():
+            try:
+                consumos = catalogo.producto(p["id"])
+                ingredientes = catalogo.detalle(consumos, "ingrediente")
+                materiales = catalogo.detalle(consumos, "material")
+                resultados.append(dict(producto=p["nombre"], precio=p["precio"], precio_delivery=p.get("precio_delivery"),
+                    ingredientes=ingredientes, materiales=materiales, costo_total=catalogo.costo(consumos),
+                    costo_ingredientes=sum((i["subtotal"] for i in ingredientes), Decimal(0)),
+                    costo_materiales=sum((i["subtotal"] for i in materiales), Decimal(0)), costeo_incompleto=False))
+            except ValueError as e:
+                resultados.append(dict(producto=p["nombre"], precio=p["precio"], precio_delivery=p.get("precio_delivery"),
+                    ingredientes=[], materiales=[], costo_total=None, costo_ingredientes=None, costo_materiales=None,
+                    costeo_incompleto=True, error=str(e)))
+        return sorted(resultados, key=lambda r: r["producto"].lower())
 
 
 @costeo_bp.route("/api/costeo/productos", methods=["GET"])
@@ -50,6 +43,8 @@ def analizar_margen():
         
         resultado = next((c for c in obtener_costeos()
                           if c["producto"].lower() == (producto or "").lower()), None)
+        if not resultado or resultado.get("costeo_incompleto"):
+            return jsonify(error="No se puede analizar un producto sin costeo completo"), 422
         costo_total = float(resultado["costo_total"] or 0) if resultado else 0.0
         
         margen_bruto = precio_venta - costo_total

@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify, current_app
-from db import fetch_all, fetch_one, execute
+from db import fetch_all, fetch_one, execute, engine
 from sqlalchemy import text
 
 insumos_bp = Blueprint("insumos", __name__)
@@ -23,15 +23,18 @@ def get_insumos():
 def add_insumo():
     data = request.json
     try:
+        if data.get("tipo", "ingrediente") not in ("ingrediente", "material"):
+            return jsonify(error="Tipo inválido"), 400
         params = {
             "nombre": data["nombre"].lower(),
             "stock": float(data.get("stock", 0)),
             "costo": float(data.get("costo_unidad", 0)),
             "unidad": data.get("unidad_medida", "unidad"),
             "sucursal_id": data.get("sucursal_id"),
+            "tipo": data.get("tipo", "ingrediente"),
             "porcion": data.get("porcion_estandar")
         }
-        sql = "INSERT INTO insumos (nombre, stock, costo_unidad, unidad_medida, sucursal_id, porcion_estandar) VALUES (:nombre, :stock, :costo, :unidad, :sucursal_id, :porcion) RETURNING *"
+        sql = "INSERT INTO insumos (nombre, stock, costo_unidad, unidad_medida, sucursal_id, porcion_estandar, tipo) VALUES (:nombre, :stock, :costo, :unidad, :sucursal_id, :porcion, :tipo) RETURNING *"
         nuevo = fetch_one(sql, params)
         return jsonify(nuevo), 201
     except Exception as e:
@@ -42,6 +45,11 @@ def add_insumo():
 def update_insumo(insumo_id):
     data = request.json
     try:
+        existente = fetch_one("SELECT tipo FROM insumos WHERE id=:id", {"id": insumo_id})
+        if not existente:
+            return jsonify(error="Insumo no encontrado"), 404
+        if data.get("tipo", existente["tipo"]) != existente["tipo"]:
+            return jsonify(error="Para reclasificar un artículo existente deben migrarse sus asignaciones"), 400
         sql = "UPDATE insumos SET stock = :stock, costo_unidad = :costo, unidad_medida = :unidad, nombre = :nombre, sucursal_id = :sucursal_id, porcion_estandar = :porcion, stock_minimo = :stock_minimo, alerta_vista = FALSE WHERE id = :id RETURNING *"
         params = {
             "id": insumo_id,
@@ -109,9 +117,9 @@ def get_alertas_stock():
 @insumos_bp.route("/api/insumos/<int:insumo_id>", methods=["DELETE"])
 def delete_insumo(insumo_id):
     try:
-        # Primero eliminar de recetas si existe (o dejar que falle por FK)
-        execute("DELETE FROM recetas WHERE insumo_id = :id", {"id": insumo_id})
-        execute("DELETE FROM insumos WHERE id = :id", {"id": insumo_id})
+        with engine.begin() as conn:
+            conn.execute(text("DELETE FROM recetas WHERE insumo_id=:id"), {"id": insumo_id})
+            conn.execute(text("DELETE FROM insumos WHERE id=:id"), {"id": insumo_id})
         return jsonify({"message": "Insumo eliminado"}), 200
     except Exception as e:
         current_app.logger.error(f"Error al eliminar insumo: {e}")

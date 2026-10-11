@@ -31,6 +31,7 @@ socketio.init_app(app, async_mode="gevent", cors_allowed_origins=allowed_origins
 
 
 # Registrar Blueprints
+from routes.materiales import materiales_bp
 from routes.auth import auth_bp
 from routes.pedido import pedido_bp
 from routes.dashboard import dashboard_bp
@@ -46,6 +47,7 @@ from routes.mermas import mermas_bp
 from routes.productos import productos_bp
 from routes.finanzas import finanzas_bp
 
+app.register_blueprint(materiales_bp)
 app.register_blueprint(auth_bp)
 app.register_blueprint(pedido_bp)
 app.register_blueprint(dashboard_bp)

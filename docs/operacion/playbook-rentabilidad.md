@@ -1,5 +1,8 @@
 # Playbook: rentabilidad y flujo de caja
 
+> **Credenciales de la BDD:** buscar el valor `DATABASE_PUBLIC_URL_MAIN` en el archivo `.env` de la raíz del proyecto. No publicar su valor ni contraseñas en este documento.
+
+
 ## Fuente de verdad
 
 Para cálculos operativos, usar los valores que muestra el **Dashboard de administración**. La consulta directa a la base de datos puede incluir pedidos pendientes o movimientos aún no reflejados por el Dashboard.

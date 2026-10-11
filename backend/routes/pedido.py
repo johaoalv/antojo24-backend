@@ -3,13 +3,17 @@ from utils.emit_dashboard_update import emitir_dashboard_update
 from utils.emit_stock_alerts import emitir_stock_alerts
 from db import engine
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError, OperationalError
+from utils.consumos import CatalogoConsumos, guardar_consumos, consumos_legacy
 
 pedido_bp = Blueprint("pedido", __name__)
 
 
 @pedido_bp.route("/api/pedido", methods=["POST"])
 def pedido():
-    data = request.json
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or not data.get("pedido_id") or not isinstance(data.get("pedido"), list):
+        return jsonify(error="Pedido inválido"), 400
     current_app.logger.debug(f"Procesando pedido {data['pedido_id']}")
 
     # --- Lógica para pagos simples y mixtos ---
@@ -73,117 +77,21 @@ def pedido():
         metodos_pago_detalles = [{"metodo_pago": metodo_pago_principal, "monto": data.get("total_pedido")}]
 
     try:
-        # Pre-validación de stock usando un diccionario para consolidar insumos
-        insumos_requeridos = {}
-        with engine.connect() as conn:
-            for item in data.get("pedido", []):
-                producto_nombre = item.get("producto", "").lower()
-                try:
-                    cantidad_vendida = int(float(item.get("cantidad", 0)))
-                except (ValueError, TypeError):
-                    cantidad_vendida = 0
-
-                if cantidad_vendida <= 0:
-                    continue
-
-                disponible = conn.execute(
-                    text("SELECT disponible FROM productos WHERE LOWER(nombre) = :producto"),
-                    {"producto": producto_nombre},
-                ).scalar()
-                if disponible is False:
-                    return jsonify({
-                        "error": f"El producto '{item.get('producto')}' ya no está disponible"
-                    }), 409
-
-                # DESCOMPONER COMBOS EN PRODUCTOS BASE
-                sql_prod = "SELECT es_combo, combo_items FROM productos WHERE LOWER(nombre) = :producto"
-                prod = conn.execute(text(sql_prod), {"producto": producto_nombre}).mappings().first()
-
-                productos_a_procesar = []
-                if prod and prod["es_combo"]:
-                    import json
-                    try:
-                        # Obtener combo_items de la BD
-                        if prod["combo_items"]:
-                            items_combo = prod["combo_items"] if isinstance(prod["combo_items"], list) else json.loads(prod["combo_items"])
-                        else:
-                            items_combo = []
-
-                        for ci in items_combo:
-                            # Procesar items fijos del combo
-                            base_prod = conn.execute(text("SELECT nombre FROM productos WHERE id = :id"), {"id": ci["id"]}).mappings().first()
-                            if base_prod:
-                                productos_a_procesar.append({
-                                    "nombre": base_prod["nombre"].lower(),
-                                    "cantidad": float(ci.get("cantidad", 1)) * cantidad_vendida
-                                })
-                    except Exception as e:
-                        current_app.logger.error(f"Error procesando combo_items: {e}")
-                else:
-                    # Si no es combo, lo procesamos como siempre
-                    productos_a_procesar.append({
-                        "nombre": producto_nombre,
-                        "cantidad": cantidad_vendida
-                    })
-
-                # Ahora iterar sobre productos_a_procesar para buscar sus recetas
-                for bp in productos_a_procesar:
-                    sql_receta = """
-                        SELECT i.id, i.nombre, i.stock, i.costo_unidad, r.cantidad_requerida
-                        FROM recetas r
-                        JOIN insumos i ON r.insumo_id = i.id
-                        WHERE LOWER(r.producto) = :producto
-                    """
-                    ingredientes = conn.execute(text(sql_receta), {"producto": bp["nombre"]}).mappings().all()
-
-                    # Calcular costo del producto individual (unitario)
-                    costo_producto_unitario = 0.0
-                    for ing in ingredientes:
-                        costo_ing = float(ing["costo_unidad"] or 0) * float(ing["cantidad_requerida"] or 0)
-                        costo_producto_unitario += costo_ing
-
-                        i_id = ing["id"]
-                        if i_id not in insumos_requeridos:
-                            insumos_requeridos[i_id] = {
-                                "nombre": ing["nombre"],
-                                "stock": float(ing["stock"] or 0),
-                                "necesario": 0.0
-                            }
-                        insumos_requeridos[i_id]["necesario"] += float(ing["cantidad_requerida"] or 0) * bp["cantidad"]
-
-                    # Guardar el costo unitario calculado para este producto/item en el pedido
-                    # Lo vinculamos al item original de data["pedido"] si es posible
-                    # (Más simple: lo calculamos de nuevo al insertar cada item)
-
-        # --- BOLSAS DE ENTREGA (manual desde POS) ---
-        bolsas = int(data.get("bolsas", 0))
-        if bolsas > 0:
-            with engine.connect() as conn:
-                sql_bolsa = "SELECT id, nombre, stock, costo_unidad FROM insumos WHERE id = 30"
-                bolsa = conn.execute(text(sql_bolsa)).mappings().first()
-                if bolsa:
-                    bolsa_id = bolsa["id"]
-                    if bolsa_id not in insumos_requeridos:
-                        insumos_requeridos[bolsa_id] = {
-                            "nombre": bolsa["nombre"],
-                            "stock": float(bolsa["stock"] or 0),
-                            "necesario": 0.0
-                        }
-                    insumos_requeridos[bolsa_id]["necesario"] += float(bolsas)
-                    current_app.logger.info(f"🛍️ {bolsas} bolsa(s) agregada(s) al pedido {data['pedido_id']}")
-
-        # Calcular el costo total de TODO el pedido
-        # (Sumando todos los insumos multiplicados por su costo unitario en el inventario actual)
-        costo_total_pedido = 0.0
-        with engine.connect() as conn:
-            for i_id, info in insumos_requeridos.items():
-                sql_costo_insumo = "SELECT costo_unidad FROM insumos WHERE id = :id"
-                ci = conn.execute(text(sql_costo_insumo), {"id": i_id}).mappings().first()
-                if ci:
-                    costo_total_pedido += (float(ci["costo_unidad"] or 0) * info["necesario"])
-
-        # Procesar el pedido en una transacción
+        # Mismo snapshot para costos y stock, dentro de la transacción de venta.
         with engine.begin() as conn:
+            conn.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ"))
+            existente = conn.execute(text("SELECT 1 FROM pedidos WHERE pedido_id=:pid"), {"pid": data["pedido_id"]}).first()
+            if existente:
+                return jsonify({"error": "Este pedido ya fue registrado"}), 409
+            catalogo = CatalogoConsumos(conn)
+            ajustes = data.get("materiales_pedido", {})
+            if not isinstance(ajustes, dict):
+                raise ValueError("Materiales del pedido inválidos")
+            ajustes = dict(ajustes)
+            if "bolsas" in data:
+                ajustes["bolsas"] = data["bolsas"]
+            consumos, lineas = catalogo.pedido(data.get("pedido"), ajustes)
+            costo_total_pedido = catalogo.costo(consumos)
             # 1. Insertar el pedido principal con costo_total
             # Para pago mixto, guardar el método principal (el primero o el de mayor monto)
             if es_pago_mixto:
@@ -192,8 +100,8 @@ def pedido():
                 metodo_principal = data.get("metodo_pago")
 
             sql_pedido = """
-                INSERT INTO pedidos (pedido_id, total_pedido, metodo_pago, sucursal_id, fecha, monto_recibido, monto_vuelto, costo_total, tipo_pedido, estado_pago)
-                VALUES (:pedido_id, :total_pedido, :metodo_pago, :sucursal_id, :fecha, :monto_recibido, :monto_vuelto, :costo_total, :tipo_pedido, :estado_pago)
+                INSERT INTO pedidos (pedido_id, total_pedido, metodo_pago, sucursal_id, fecha, monto_recibido, monto_vuelto, costo_total, tipo_pedido, estado_pago, consumos_registrados)
+                VALUES (:pedido_id, :total_pedido, :metodo_pago, :sucursal_id, :fecha, :monto_recibido, :monto_vuelto, :costo_total, :tipo_pedido, :estado_pago, TRUE)
             """
             params_pedido = {
                 "pedido_id": data["pedido_id"],
@@ -215,22 +123,9 @@ def pedido():
                 VALUES (:pedido_id, :producto, :cantidad, :total_item, :metodo_pago, :sucursal_id, :fecha, :costo_unitario, :producto_id)
             """
 
-            for item in data["pedido"]:
-                # Obtener producto_id
-                item_name = item["producto"].lower()
-                sql_get_producto = "SELECT id FROM productos WHERE LOWER(nombre) = :producto"
-                prod_res = conn.execute(text(sql_get_producto), {"producto": item_name}).mappings().first()
-                p_id = prod_res["id"] if prod_res else None
-
-                # Calcular costo unitario (frozen) para este producto específico
-                sql_get_costo = """
-                    SELECT SUM(r.cantidad_requerida * i.costo_unidad) as costo_total
-                    FROM recetas r
-                    JOIN insumos i ON r.insumo_id = i.id
-                    WHERE LOWER(r.producto) = :producto
-                """
-                res_costo = conn.execute(text(sql_get_costo), {"producto": item_name}).mappings().first()
-                costo_u = float(res_costo["costo_total"] or 0) if res_costo else 0.0
+            for item, linea in zip(data["pedido"], lineas):
+                p_id = linea["producto_id"]
+                costo_u = linea["costo_unitario"]
 
                 conn.execute(text(sql_productos), {
                     "pedido_id": data["pedido_id"],
@@ -282,18 +177,8 @@ def pedido():
             else:
                 current_app.logger.info(f"⏳ Pedido {data['pedido_id']} pendiente de pago (delivery). Movimiento de caja diferido.")
             
-            # 3. Descontar stock (usando el cálculo previo)
-            for i_id, info in insumos_requeridos.items():
-                sql_update_stock = """
-                    UPDATE insumos 
-                    SET stock = stock - :cantidad_total
-                    WHERE id = :insumo_id
-                """
-                conn.execute(text(sql_update_stock), {
-                    "cantidad_total": info["necesario"],
-                    "insumo_id": i_id
-                })
-            
+            guardar_consumos(conn, data["pedido_id"], consumos)
+
             current_app.logger.info(f"✅ Pedido {data['pedido_id']} completado y stock actualizado.")
             
         current_app.logger.info("🚀 Emitiendo actualización de dashboard vía WebSocket...")
@@ -301,6 +186,15 @@ def pedido():
         emitir_stock_alerts()
         return jsonify(response_data), 201
         
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except OperationalError as e:
+        if getattr(e.orig, "pgcode", None) in ("40001", "40P01"):
+            return jsonify(error="El inventario cambió durante la venta. Reintenta confirmar."), 409
+        current_app.logger.exception("Error de base de datos al registrar pedido")
+        return jsonify(error="No se pudo registrar el pedido"), 500
+    except IntegrityError:
+        return jsonify({"error": "El pedido ya existe o contiene una referencia inválida"}), 409
     except Exception as e:
         current_app.logger.exception(f"Error al procesar pedido: {str(e)}")
         return jsonify({"error": "Error interno al procesar el pedido"}), 500
@@ -312,75 +206,19 @@ def eliminar_pedido(pedido_id):
     try:
         restored_items = []
         with engine.begin() as conn:
-            # 1. Obtener los productos del pedido para saber qué devolver al inventario
-            sql_productos = "SELECT producto, cantidad FROM productos_pedido WHERE pedido_id = :pedido_id"
-            items = conn.execute(text(sql_productos), {"pedido_id": pedido_id}).mappings().all()
-
-            if not items:
-                # Si no hay productos en productos_pedido, verificamos si existe en pedidos
-                sql_check = "SELECT 1 FROM pedidos WHERE pedido_id = :pedido_id"
-                exists = conn.execute(text(sql_check), {"pedido_id": pedido_id}).first()
-                if not exists:
-                    return jsonify({"error": "Pedido no encontrado"}), 404
-
-            # 2. Revertir el stock para cada producto
-            for item in items:
-                producto_nombre = item["producto"].lower()
-                cantidad_vendida = float(item["cantidad"])
-
-                # Obtener si el producto es combo
-                sql_prod = "SELECT es_combo, combo_items FROM productos WHERE LOWER(nombre) = :producto"
-                prod = conn.execute(text(sql_prod), {"producto": producto_nombre}).mappings().first()
-
-                productos_a_procesar = []
-                if prod and prod["es_combo"] and prod["combo_items"]:
-                    import json
-                    try:
-                        items_combo = prod["combo_items"] if isinstance(prod["combo_items"], list) else json.loads(prod["combo_items"])
-                        for ci in items_combo:
-                            base_prod = conn.execute(text("SELECT nombre FROM productos WHERE id = :id"), {"id": ci["id"]}).mappings().first()
-                            if base_prod:
-                                productos_a_procesar.append({
-                                    "nombre": base_prod["nombre"].lower(),
-                                    "cantidad": float(ci.get("cantidad", 1)) * cantidad_vendida
-                                })
-                    except Exception as e:
-                        current_app.logger.error(f"Error procesando combo_items en eliminación: {e}")
-                else:
-                    productos_a_procesar.append({
-                        "nombre": producto_nombre,
-                        "cantidad": cantidad_vendida
-                    })
-
-                for bp in productos_a_procesar:
-                    # Obtener la receta para este producto con el nombre del insumo
-                    sql_receta = """
-                        SELECT r.insumo_id, i.nombre as insumo_nombre, r.cantidad_requerida
-                        FROM recetas r
-                        JOIN insumos i ON r.insumo_id = i.id
-                        WHERE LOWER(r.producto) = :producto
-                    """
-                    ingredientes = conn.execute(text(sql_receta), {"producto": bp["nombre"]}).mappings().all()
-
-                    for ing in ingredientes:
-                        total_a_devolver = float(ing["cantidad_requerida"]) * bp["cantidad"]
-                        
-                        sql_update_stock = """
-                            UPDATE insumos 
-                            SET stock = stock + :cantidad
-                            WHERE id = :insumo_id
-                        """
-                        conn.execute(text(sql_update_stock), {
-                            "cantidad": total_a_devolver,
-                            "insumo_id": ing["insumo_id"]
-                        })
-                        
-                        restored_items.append({
-                            "insumo": ing["insumo_nombre"],
-                            "cantidad": total_a_devolver,
-                            "producto": bp["nombre"]
-                        })
-                        current_app.logger.debug(f"Restaurado {total_a_devolver} del insumo {ing['insumo_nombre']} por {bp['nombre']}")
+            pedido = conn.execute(text("SELECT consumos_registrados FROM pedidos WHERE pedido_id=:pid FOR UPDATE"), {"pid": pedido_id}).mappings().first()
+            if not pedido:
+                return jsonify({"error": "Pedido no encontrado"}), 404
+            if pedido["consumos_registrados"]:
+                consumos = conn.execute(text("SELECT c.insumo_id, c.cantidad, i.nombre FROM pedido_consumos c JOIN insumos i ON i.id=c.insumo_id WHERE c.pedido_id=:pid ORDER BY c.insumo_id"), {"pid": pedido_id}).mappings().all()
+            else:
+                # Compatibilidad: conservar la reconstrucción histórica, incluyendo
+                # materiales retirados de recetas. No inventar bolsas no registradas.
+                consumos = consumos_legacy(conn, pedido_id)
+            for consumo in consumos:
+                conn.execute(text("UPDATE insumos SET stock=stock+:cantidad WHERE id=:id"),
+                             {"cantidad": consumo["cantidad"], "id": consumo["insumo_id"]})
+                restored_items.append({"insumo": consumo["nombre"], "cantidad": consumo["cantidad"]})
 
             # 3. Eliminar registros de las tablas
             conn.execute(text("DELETE FROM productos_pedido WHERE pedido_id = :pedido_id"), {"pedido_id": pedido_id})
@@ -396,6 +234,8 @@ def eliminar_pedido(pedido_id):
             "restored_items": restored_items
         }), 200
 
+    except ValueError as e:
+        return jsonify(error=str(e)), 409
     except Exception as e:
         current_app.logger.exception(f"Error al eliminar pedido {pedido_id}: {str(e)}")
         return jsonify({"error": "Error interno al eliminar el pedido"}), 500

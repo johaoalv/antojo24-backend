@@ -1,5 +1,8 @@
 # Backend Antojo24 - Guía para Agentes
 
+> **Credenciales de la BDD:** buscar el valor `DATABASE_PUBLIC_URL_MAIN` en el archivo `.env` de la raíz del proyecto. No publicar su valor ni contraseñas en este documento.
+
+
 Este documento proporciona una descripción completa del backend de Antojo24 para que los agentes IA puedan entender y trabajar eficientemente en el proyecto sin revisar archivo por archivo.
 
 ---
@@ -96,7 +99,7 @@ backend/
 ### Variables de Entorno Críticas
 
 ```ini
-DATABASE_PUBLIC_URL=postgresql://user:pass@host:5432/dbname  # Conexión DB (OBLIGATORIA)
+DATABASE_PUBLIC_URL=<valor privado de conexión para la aplicación>  # OBLIGATORIA
 FRONTEND_URL=http://localhost:5173                           # URL frontend (CORS)
 NETLIFY_URL=https://...                                      # URL Netlify (CORS alternativa)
 N8N_API_KEY=...                                              # API key para n8n workflows
@@ -511,7 +514,7 @@ python app.py
 **Causa:** Falta variable de entorno
 **Solución:** Agregar en `.env` o en Railway:
 ```
-DATABASE_PUBLIC_URL=postgresql://...
+DATABASE_PUBLIC_URL=<valor privado de conexión para la aplicación>
 ```
 
 ### Problema: "CORS error: Origin not allowed"
@@ -571,7 +574,9 @@ with engine.connect() as conn:
 ## 🔗 Referencias
 
 - **Frontend:** `/frontend` (React/Vite)
-- **Documentación de cierre:** `/CIERRE_MES.md`
+- **Documentación operativa:** `/docs/README.md`
+- **Documentación de cierre:** `/docs/CIERRE_MES.md`
+- **Ventas de productos y combos:** `/docs/RUNBOOK_VENTAS_PRODUCTOS.md`
 - **Tests:** `/backend/tests/`
 - **API Docs:** Ver comentarios en cada route
 

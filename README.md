@@ -1,5 +1,8 @@
 # Backend - Antojo24
 
+> **Credenciales de la BDD:** buscar el valor `DATABASE_PUBLIC_URL_MAIN` en el archivo `.env` de la raíz del proyecto. No publicar su valor ni contraseñas en este documento.
+
+
 Este documento proporciona los pasos necesarios para configurar y ejecutar el backend del proyecto **Antojo24** en tu entorno local.
 
 ## Tecnologías utilizadas
