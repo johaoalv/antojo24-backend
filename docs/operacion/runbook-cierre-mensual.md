@@ -1,5 +1,8 @@
 # Runbook: cierre mensual
 
+> **Credenciales de la BDD:** buscar el valor `DATABASE_PUBLIC_URL_MAIN` en el archivo `.env` de la raíz del proyecto. No publicar su valor ni contraseñas en este documento.
+
+
 ## Objetivo
 
 Cerrar el mes con una lectura clara de ventas, gastos, utilidad, rentabilidad y tesorería, sin mezclar movimientos pagados con Fondos.

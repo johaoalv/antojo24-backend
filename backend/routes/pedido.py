@@ -208,7 +208,7 @@ def pedido():
                 "estado_pago": data.get("estado_pago", "pagado")
             }
             conn.execute(text(sql_pedido), params_pedido)
-            
+
             # 2. Insertar los productos del pedido en la tabla oficial productos_pedido
             sql_productos = """
                 INSERT INTO productos_pedido (pedido_id, producto, cantidad, total_item, metodo_pago, sucursal_id, fecha, costo_unitario, producto_id)
@@ -243,7 +243,7 @@ def pedido():
                     "costo_unitario": costo_u,
                     "producto_id": p_id
                 })
-            
+
             # 3. Registrar el MOVIMIENTO DE CAJA (Solo si el pago ya fue recibido)
             estado_pago = data.get("estado_pago", "pagado")
             if estado_pago != "pendiente":
@@ -281,11 +281,11 @@ def pedido():
                     })
             else:
                 current_app.logger.info(f"⏳ Pedido {data['pedido_id']} pendiente de pago (delivery). Movimiento de caja diferido.")
-            
+
             # 3. Descontar stock (usando el cálculo previo)
             for i_id, info in insumos_requeridos.items():
                 sql_update_stock = """
-                    UPDATE insumos 
+                    UPDATE insumos
                     SET stock = stock - :cantidad_total
                     WHERE id = :insumo_id
                 """
@@ -293,14 +293,14 @@ def pedido():
                     "cantidad_total": info["necesario"],
                     "insumo_id": i_id
                 })
-            
+
             current_app.logger.info(f"✅ Pedido {data['pedido_id']} completado y stock actualizado.")
-            
+
         current_app.logger.info("🚀 Emitiendo actualización de dashboard vía WebSocket...")
         emitir_dashboard_update()
         emitir_stock_alerts()
         return jsonify(response_data), 201
-        
+
     except Exception as e:
         current_app.logger.exception(f"Error al procesar pedido: {str(e)}")
         return jsonify({"error": "Error interno al procesar el pedido"}), 500
@@ -364,9 +364,9 @@ def eliminar_pedido(pedido_id):
 
                     for ing in ingredientes:
                         total_a_devolver = float(ing["cantidad_requerida"]) * bp["cantidad"]
-                        
+
                         sql_update_stock = """
-                            UPDATE insumos 
+                            UPDATE insumos
                             SET stock = stock + :cantidad
                             WHERE id = :insumo_id
                         """
@@ -374,7 +374,7 @@ def eliminar_pedido(pedido_id):
                             "cantidad": total_a_devolver,
                             "insumo_id": ing["insumo_id"]
                         })
-                        
+
                         restored_items.append({
                             "insumo": ing["insumo_nombre"],
                             "cantidad": total_a_devolver,

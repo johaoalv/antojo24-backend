@@ -1,7 +1,8 @@
 from flask import Blueprint, jsonify, current_app, request
 from datetime import date, timedelta
 import os
-from db import fetch_all, fetch_one
+from db import fetch_all, fetch_one, engine
+from utils.tesoreria import saldos_operativos
 
 import math
 
@@ -79,7 +80,7 @@ def get_dashboard():
                 COALESCE(SUM(CASE WHEN tipo = 'salida' AND categoria = 'inventario' AND metodo_pago != 'fondos' THEN monto ELSE 0 END), 0) as compras_inventario,
                 COALESCE(SUM(CASE WHEN tipo = 'salida' AND categoria = 'inversion' AND metodo_pago != 'fondos' THEN monto ELSE 0 END), 0) as inversiones_mes,
                 COALESCE(SUM(CASE WHEN tipo = 'entrada' AND categoria = 'inversion' THEN monto ELSE 0 END), 0) as inyecciones_mes,
-                COALESCE(SUM(CASE WHEN tipo = 'salida' AND metodo_pago = 'fondos' THEN monto ELSE 0 END), 0) as gastos_fondos_mes,
+                COALESCE(SUM(CASE WHEN tipo = 'salida' AND metodo_pago = 'fondos' AND categoria IS DISTINCT FROM 'traspaso' THEN monto ELSE 0 END), 0) as gastos_fondos_mes,
                 COALESCE(SUM(CASE WHEN metodo_pago != 'fondos' THEN (CASE WHEN tipo = 'entrada' THEN monto ELSE -monto END) ELSE 0 END), 0) as saldo_caja_mes
             FROM movimientos_caja
             {where_mes}
@@ -110,8 +111,8 @@ def get_dashboard():
             SELECT
                 metodo_pago,
                 SUM(CASE WHEN tipo = 'entrada' THEN monto ELSE -monto END) as saldo,
-                SUM(CASE WHEN tipo = 'salida' THEN monto ELSE 0 END) as total_gasto,
-                COUNT(CASE WHEN tipo = 'salida' THEN 1 END) as num_salidas
+                SUM(CASE WHEN tipo = 'salida' AND categoria IS DISTINCT FROM 'traspaso' THEN monto ELSE 0 END) as total_gasto,
+                COUNT(CASE WHEN tipo = 'salida' AND categoria IS DISTINCT FROM 'traspaso' THEN 1 END) as num_salidas
             FROM movimientos_caja
             {where_mes}
             GROUP BY metodo_pago
@@ -186,6 +187,7 @@ def get_dashboard():
                 COALESCE(SUM(CASE WHEN tipo = 'entrada' THEN monto ELSE -monto END), 0) AS utilidad_neta
             FROM movimientos_caja
             {where_rentabilidad} AND metodo_pago IS DISTINCT FROM 'fondos'
+            AND categoria IS DISTINCT FROM 'traspaso'
             GROUP BY mes
             ORDER BY mes DESC
         """
@@ -223,8 +225,13 @@ def get_dashboard():
             for d in fetch_all(sql_historial_diario, params_15_dias)
         ]
 
+        with engine.connect() as conn:
+            saldos = saldos_operativos(conn, None if is_global else s_id_filter)
+
         return jsonify({
             "nombre_sucursal": nombre_sucursal,
+            "saldos_operativos": {k: float(v) for k, v in saldos.items()},
+            "saldo_operativo_total": float(sum(saldos.values())),
             "mes_actual": {
                 "ventas": round(ventas_mes, 2),
                 "cogs": round(cogs_mes, 2),
@@ -266,8 +273,13 @@ def get_tesoreria():
         sql_caja_total = f"SELECT SUM(CASE WHEN tipo = 'entrada' THEN monto ELSE -monto END) as saldo FROM movimientos_caja {where_global}"
         res_caja_total = fetch_one(sql_caja_total, params_global)
         saldo_caja_total_historico = to_number(res_caja_total.get("saldo", 0))
-
-        return jsonify({"saldo_caja": round(saldo_caja_total_historico, 2)}), 200
+        with engine.connect() as conn:
+            saldos = saldos_operativos(conn, None if is_global else s_id_filter)
+        return jsonify({
+            "saldo_caja": round(saldo_caja_total_historico, 2),
+            "saldos_operativos": {k: float(v) for k, v in saldos.items()},
+            "saldo_fondos": round(saldo_caja_total_historico - float(sum(saldos.values())), 2),
+        }), 200
 
     except Exception as e:
         current_app.logger.exception("Excepción en get_tesoreria: %s", e)
