@@ -56,3 +56,33 @@ Esto es independiente de la funcionalidad de materiales revertida: no requiere
 Usa exclusivamente un esquema temporal en PostgreSQL local. Cubre continuidad
 mensual, cuentas individuales, precisión, rechazos, concurrencia, reintentos,
 rollback, historial y conservación de Tesorería/utilidad.
+
+## Cierre diario
+
+La diferencia de efectivo se calcula como conteo físico menos saldo acumulado
+esperado (apertura del día más movimientos de efectivo, incluidos traspasos).
+Los campos históricos `total_efectivo`, `total_transferencia` y `total_general`
+conservan su significado de movimiento neto del día; no son saldos acumulados.
+El resumen agrega `saldo_efectivo_esperado`, `saldos_finales` y `traspasos`.
+`detalle_json` guarda saldos iniciales/finales y traspasos separados; sus entradas
+y salidas excluyen traspasos internos. No se reescriben cierres anteriores.
+
+## Consultar un saldo actual sin reinicio mensual
+
+Ejemplo: Yappy de Santa María al inicio del 1 de noviembre. La fecha de corte
+debe ser igual o posterior a `fecha_inicio` de la apertura. No sumar otros $50.
+
+```sql
+SELECT a.sucursal_id,
+       ROUND(a.yappy + COALESCE(SUM(CASE WHEN m.tipo='entrada'
+         THEN m.monto ELSE -m.monto END), 0), 2) AS saldo_yappy
+FROM tesoreria_aperturas a
+LEFT JOIN movimientos_caja m ON m.sucursal_id = a.sucursal_id
+  AND m.metodo_pago = 'yappy' AND m.fecha >= a.fecha_inicio
+  AND m.fecha < '2026-11-01'
+WHERE a.sucursal_id = 'sucursal_santa_maria'
+GROUP BY a.sucursal_id, a.yappy;
+```
+
+Para conciliar saldos se incluyen los traspasos. Para calcular ingresos/gastos
+se excluyen con `categoria IS DISTINCT FROM 'traspaso'`.

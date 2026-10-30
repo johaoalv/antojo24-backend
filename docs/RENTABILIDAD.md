@@ -1,3 +1,7 @@
+> **Saldos continuos y traspasos:** los movimientos con `categoria='traspaso'`
+> son internos. Excluirlos de ingresos, gastos y rentabilidad; incluirlos cuando
+> se concilien saldos por cuenta. Ver [Traspasos de Tesorería](TRASPASOS_TESORERIA.md).
+
 # 📈 ANÁLISIS DE RENTABILIDAD — ANTOJO24
 
 > **Credenciales de la BDD:** buscar el valor `DATABASE_PUBLIC_URL_MAIN` en el archivo `.env` de la raíz del proyecto. No publicar su valor ni contraseñas en este documento.
@@ -254,13 +258,13 @@ Query para diagnosticar:
 SELECT 
   'COGS %' AS metrica,
   ROUND((SELECT SUM(CASE WHEN tipo='salida' AND categoria='inventario' THEN monto ELSE 0 END) 
-          FROM movimientos_caja WHERE fecha >= '2026-06-01' AND fecha < '2026-07-01' AND metodo_pago != 'fondos') /
+          FROM movimientos_caja WHERE fecha >= '2026-06-01' AND fecha < '2026-07-01' AND metodo_pago != 'fondos' AND categoria IS DISTINCT FROM 'traspaso') /
          (SELECT SUM(CASE WHEN tipo='entrada' THEN monto ELSE 0 END) 
-          FROM movimientos_caja WHERE fecha >= '2026-06-01' AND fecha < '2026-07-01' AND metodo_pago != 'fondos') * 100, 1) AS junio,
+          FROM movimientos_caja WHERE fecha >= '2026-06-01' AND fecha < '2026-07-01' AND metodo_pago != 'fondos' AND categoria IS DISTINCT FROM 'traspaso') * 100, 1) AS junio,
   ROUND((SELECT SUM(CASE WHEN tipo='salida' AND categoria='inventario' THEN monto ELSE 0 END) 
-          FROM movimientos_caja WHERE fecha >= '2026-07-01' AND fecha < '2026-08-01' AND metodo_pago != 'fondos') /
+          FROM movimientos_caja WHERE fecha >= '2026-07-01' AND fecha < '2026-08-01' AND metodo_pago != 'fondos' AND categoria IS DISTINCT FROM 'traspaso') /
          (SELECT SUM(CASE WHEN tipo='entrada' THEN monto ELSE 0 END) 
-          FROM movimientos_caja WHERE fecha >= '2026-07-01' AND fecha < '2026-08-01' AND metodo_pago != 'fondos') * 100, 1) AS julio
+          FROM movimientos_caja WHERE fecha >= '2026-07-01' AND fecha < '2026-08-01' AND metodo_pago != 'fondos' AND categoria IS DISTINCT FROM 'traspaso') * 100, 1) AS julio
 UNION ALL
 SELECT 'Margen %' AS metrica,
   14.3, 30.7;
@@ -361,6 +365,7 @@ SELECT
   ) AS margen_pct
 FROM movimientos_caja
 WHERE fecha >= '2026-07-01' AND fecha < '2026-08-01'
+  AND categoria IS DISTINCT FROM 'traspaso'
 GROUP BY referencia_id
 ORDER BY ingresos DESC;
 ```
@@ -373,10 +378,12 @@ SELECT
   ROUND(
     SUM(CASE WHEN tipo='entrada' THEN monto ELSE 0 END) /
     (SELECT SUM(CASE WHEN tipo='entrada' THEN monto ELSE 0 END) FROM movimientos_caja 
-     WHERE fecha >= '2026-07-01' AND fecha < '2026-08-01') * 100, 1
+     WHERE fecha >= '2026-07-01' AND fecha < '2026-08-01'
+  AND categoria IS DISTINCT FROM 'traspaso') * 100, 1
   ) AS pct_ingresos
 FROM movimientos_caja
 WHERE tipo='entrada' AND fecha >= '2026-07-01' AND fecha < '2026-08-01'
+  AND categoria IS DISTINCT FROM 'traspaso'
 GROUP BY categoria
 ORDER BY ingresos DESC;
 ```
