@@ -28,7 +28,7 @@ class TraspasosTest(unittest.TestCase):
         cls.engine = create_engine(URL, connect_args={'options': f'-csearch_path={cls.schema}'})
         os.environ.setdefault('DATABASE_PUBLIC_URL', URL)
         import db
-        from routes import finanzas, dashboard
+        from routes import finanzas, dashboard, cierre
         from scripts.migrate_traspasos import aplicar
         cls.db_patch = patch.object(db, 'engine', cls.engine)
         cls.db_patch.start()
@@ -36,10 +36,13 @@ class TraspasosTest(unittest.TestCase):
         cls.fin_patch.start()
         cls.dash_patch = patch.object(dashboard, 'engine', cls.engine)
         cls.dash_patch.start()
+        cls.cierre_patch = patch.object(cierre, 'engine', cls.engine)
+        cls.cierre_patch.start()
         cls.aplicar = staticmethod(aplicar)
         cls.app = Flask(__name__)
         cls.app.register_blueprint(finanzas.finanzas_bp)
         cls.app.register_blueprint(dashboard.dashboard_bp)
+        cls.app.register_blueprint(cierre.cierre_bp)
         cls.app.testing = True
         with cls.engine.begin() as conn:
             conn.execute(text('''CREATE TABLE tiendas_acceso (sucursal_id text, nombre_tienda text);
@@ -48,6 +51,12 @@ class TraspasosTest(unittest.TestCase):
                 referencia_id text, metodo_pago text);
                 CREATE TABLE pedidos (pedido_id uuid, fecha timestamp, sucursal_id text,
                 total_pedido numeric, costo_total numeric);
+                CREATE TABLE productos_pedido (pedido_id uuid, fecha timestamp, sucursal_id text);
+                CREATE TABLE cierres_caja (id serial PRIMARY KEY, sucursal_id text, fecha_cierre date,
+                hora_cierre timestamp, total_efectivo numeric, total_tarjeta numeric,
+                total_transferencia numeric, total_general numeric, total_real numeric,
+                sobrante numeric, faltante numeric, ventas_realizadas integer,
+                creado_por text, detalle_json jsonb);
                 CREATE TABLE insumos (id integer, costo_unidad numeric);
                 CREATE TABLE mermas (insumo_id integer, cantidad numeric, fecha timestamp, sucursal_id text);
             '''))
@@ -55,7 +64,7 @@ class TraspasosTest(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        cls.db_patch.stop(); cls.fin_patch.stop(); cls.dash_patch.stop()
+        cls.db_patch.stop(); cls.fin_patch.stop(); cls.dash_patch.stop(); cls.cierre_patch.stop()
         cls.engine.dispose()
         with cls.admin.begin() as conn:
             conn.execute(text(f'DROP SCHEMA {cls.schema} CASCADE'))
@@ -66,7 +75,7 @@ class TraspasosTest(unittest.TestCase):
         self.hoy = datetime.combine(date.today(), datetime.min.time())
         self.proximo = (self.inicio + timedelta(days=32)).replace(day=1)
         with self.engine.begin() as conn:
-            conn.execute(text('TRUNCATE tesoreria_traspasos,tesoreria_aperturas,movimientos_caja,tiendas_acceso CASCADE'))
+            conn.execute(text('TRUNCATE tesoreria_traspasos,tesoreria_aperturas,movimientos_caja,tiendas_acceso,cierres_caja,productos_pedido CASCADE'))
             conn.execute(text("INSERT INTO tiendas_acceso VALUES ('a','A'),('b','B')"))
             self.aplicar(conn, self.inicio)
             conn.execute(text("""INSERT INTO movimientos_caja(fecha,tipo,categoria,monto,sucursal_id,metodo_pago)
@@ -173,6 +182,68 @@ class TraspasosTest(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=2) as pool:
             self.assertCountEqual(list(pool.map(intento,range(2))), ['ok','conflicto'])
         self.assertEqual(self.saldos(), {'yappy':Decimal(50),'efectivo':Decimal(80)})
+
+    def cerrar(self, contado, **extras):
+        import contextlib
+        import io
+        with patch('routes.cierre.get_panama_datetime', return_value=self.hoy), contextlib.redirect_stdout(io.StringIO()):
+            return self.client.post('/api/cierre-caja', json=dict(
+                sucursal_id='a', creado_por='test', total_real=contado, **extras))
+
+    def test_cierre_compara_con_saldo_acumulado_no_neto_del_dia(self):
+        r = self.cerrar(200)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json['resumen']['saldo_efectivo_esperado'], 200)
+        self.assertEqual(r.json['resumen']['sobrante'], 0)
+        self.assertEqual(r.json['resumen']['faltante'], 0)
+        # El campo histórico total_efectivo sigue representando neto diario.
+        with self.engine.connect() as conn:
+            self.assertEqual(conn.execute(text('SELECT total_efectivo FROM cierres_caja')).scalar(), 150)
+
+    def test_cierre_cuenta_traspasos_en_saldo_pero_no_en_ingresos_gastos(self):
+        self.assertEqual(self.confirmar().status_code, 201)
+        r = self.cerrar(80)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json['resumen']['saldo_efectivo_esperado'], 80)
+        self.assertEqual(r.json['resumen']['sobrante'], 0)
+        self.assertEqual(r.json['resumen']['faltante'], 0)
+        with self.engine.connect() as conn:
+            detalle = conn.execute(text('SELECT detalle_json FROM cierres_caja')).scalar()
+        self.assertEqual(detalle['entradas'], 400)
+        self.assertEqual(detalle['salidas'], 0)
+        self.assertEqual(detalle['traspasos'], {'yappy': -250, 'efectivo': -120, 'fondos': 370})
+
+    def test_cierre_sobrante_real(self):
+        r = self.cerrar(205)
+        self.assertEqual(r.json['resumen']['sobrante'], 5)
+        self.assertEqual(r.json['resumen']['faltante'], 0)
+
+    def test_cierre_faltante_real(self):
+        r = self.cerrar(195)
+        self.assertEqual(r.json['resumen']['sobrante'], 0)
+        self.assertEqual(r.json['resumen']['faltante'], 5)
+
+    def test_cierre_primer_dia_sin_reinicio(self):
+        from routes import cierre
+        with self.engine.begin() as conn:
+            conn.execute(text("INSERT INTO movimientos_caja(fecha,tipo,categoria,monto,sucursal_id,metodo_pago) VALUES (:f,'entrada','venta',10,'a','efectivo')"), {'f': self.proximo})
+        with patch.object(cierre,'get_panama_datetime', return_value=datetime.combine(self.proximo,datetime.min.time())):
+            import contextlib, io
+            with contextlib.redirect_stdout(io.StringIO()):
+                r = self.client.post('/api/cierre-caja', json=dict(sucursal_id='a',creado_por='test',total_real=210))
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json['resumen']['sobrante'], 0)
+        self.assertEqual(r.json['resumen']['saldo_efectivo_esperado'], 210)
+
+    def test_cierre_rechaza_conteos_invalidos_y_no_confia_totales_cliente(self):
+        for valor in [None, True, -1, 'NaN', 'Infinity', '1.123']:
+            with self.subTest(valor=valor):
+                self.assertEqual(self.cerrar(valor).status_code, 400)
+        r = self.cerrar(200, total_efectivo=999, total_general=999)
+        self.assertEqual(r.json['resumen']['sobrante'], 0)
+        self.assertEqual(r.json['resumen']['total_general'], 400)
+        self.assertEqual(self.cerrar(200).status_code, 409)
+
 
 
 if __name__ == '__main__':

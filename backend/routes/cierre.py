@@ -3,7 +3,9 @@ from flask import Blueprint, request, jsonify
 from datetime import datetime, timedelta
 import os
 import json
-from db import fetch_all, fetch_one, fetch_all as query_fetch_all, execute, insert_many
+from db import fetch_all, fetch_one, fetch_all as query_fetch_all, execute, insert_many, engine
+from utils.resumen_cierre import calcular_resumen_cierre
+from utils.tesoreria import dinero
 
 cierre_bp = Blueprint("cierre", __name__)
 
@@ -87,66 +89,53 @@ def cierre_caja():
         print(f"[DEBUG CIERRE] Cierre ya existe. Devolviendo 409.")
         return jsonify({"message": "Ya existe un cierre para hoy", "error": "Cierre duplicado"}), 409
 
-    inicio, fin, _ = get_rango_fecha_panama()
-    print(f"[DEBUG CIERRE] Rango de fechas: de {inicio} a {fin}")
+    inicio = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    fin = inicio + timedelta(days=1)
+    try:
+        # Una misma instantánea para apertura, movimientos y saldo final.
+        with engine.connect().execution_options(isolation_level="REPEATABLE READ") as conn:
+            calculo = calcular_resumen_cierre(conn, sucursal_id, inicio, fin)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception:
+        return jsonify({"error": "No se pudo calcular el saldo esperado del cierre"}), 500
 
-    # 2. Obtener todos los movimientos de caja del día (ventas + gastos + inyecciones)
-    movimientos = fetch_all(
-        "SELECT tipo, metodo_pago, SUM(monto) as total FROM movimientos_caja WHERE sucursal_id = :sucursal_id AND fecha >= :inicio AND fecha <= :fin GROUP BY tipo, metodo_pago",
-        {"sucursal_id": sucursal_id, "inicio": inicio, "fin": fin}
-    )
-
-    if not movimientos:
-        print(f"[DEBUG CIERRE] No se encontraron movimientos. Devolviendo 404.")
+    if not calculo["hay_movimientos"]:
         return jsonify({"error": "No hay movimientos registrados hoy"}), 404
 
-    # 3. Calcular neto por método (entradas - salidas)
-    neto = {}
-    entradas_total = 0.0
-    salidas_total = 0.0
-    for m in movimientos:
-        metodo = m.get("metodo_pago") or "otro"
-        monto = float(m.get("total") or 0)
-        if m["tipo"] == "entrada":
-            neto[metodo] = neto.get(metodo, 0) + monto
-            entradas_total += monto
-        else:
-            neto[metodo] = neto.get(metodo, 0) - monto
-            salidas_total += monto
-
-    # Ventas realizadas (solo para referencia, se sigue contando de pedidos)
-    r_ventas = fetch_all(
-        "SELECT COUNT(DISTINCT pedido_id) as cnt FROM productos_pedido WHERE sucursal_id = :sucursal_id AND fecha >= :inicio AND fecha <= :fin",
-        {"sucursal_id": sucursal_id, "inicio": inicio, "fin": fin}
-    )
-    ventas_realizadas = int(r_ventas[0]["cnt"]) if r_ventas else 0
-
-    totales = {**neto, "total_general": entradas_total - salidas_total, "ventas_realizadas": ventas_realizadas}
-    productos_serializables = {"entradas": round(entradas_total, 2), "salidas": round(salidas_total, 2), **{k: round(v, 2) for k, v in neto.items()}}
+    neto = {k: float(v) for k, v in calculo["neto"].items()}
+    totales = {**neto, "total_general": float(calculo["entradas"] - calculo["salidas"]),
+               "ventas_realizadas": calculo["ventas_realizadas"]}
+    saldo_efectivo_esperado = float(calculo["finales"]["efectivo"])
+    productos_serializables = {
+        "entradas": float(calculo["entradas"]), "salidas": float(calculo["salidas"]), **neto,
+        "saldos_iniciales": {k: float(v) for k, v in calculo["iniciales"].items()},
+        "saldos_finales": {k: float(v) for k, v in calculo["finales"].items()},
+        "traspasos": {k: float(v) for k, v in calculo["traspasos"].items()},
+    }
 
     print(f"[DEBUG CIERRE] Totales calculados: {totales}")
     print(f"[DEBUG CIERRE] Desglose: {productos_serializables}")
 
     try:
-        total_general = parse_numeric_value(data.get("total_general"), totales["total_general"], "total_general")
-        total_efectivo = parse_numeric_value(data.get("total_efectivo"), totales.get("efectivo", 0), "total_efectivo")
-        total_tarjeta = parse_numeric_value(data.get("total_tarjeta"), totales.get("tarjeta", 0), "total_tarjeta")
-        total_transferencia = parse_numeric_value(
-            data.get("total_transferencia"),
-            totales.get("transferencia", 0) + totales.get("yappy", 0),
-            "total_transferencia"
-        )
-        total_real = parse_numeric_value(data.get("total_real"), total_efectivo, "total_real")
+        # Los totales provienen del servidor; el cliente solo aporta el conteo físico.
+        total_general = totales["total_general"]
+        total_efectivo = totales.get("efectivo", 0)
+        total_tarjeta = totales.get("tarjeta", 0)
+        total_transferencia = totales.get("transferencia", 0) + totales.get("yappy", 0)
+        total_real = float(dinero(data.get("total_real")))
+        if total_real < 0:
+            raise ValueError("El efectivo contado no puede ser negativo")
     except ValueError as parse_error:
         print(f"[DEBUG CIERRE] ERROR PARSE: {parse_error}")
         return jsonify({"error": str(parse_error)}), 400
 
     # Sobrante/faltante: físico contado vs efectivo esperado
-    if total_real > total_efectivo:
-        sobrante = round(total_real - total_efectivo, 2)
+    if total_real > saldo_efectivo_esperado:
+        sobrante = round(total_real - saldo_efectivo_esperado, 2)
         faltante = 0.0
-    elif total_real < total_efectivo:
-        faltante = round(total_efectivo - total_real, 2)
+    elif total_real < saldo_efectivo_esperado:
+        faltante = round(saldo_efectivo_esperado - total_real, 2)
         sobrante = 0.0
     else:
         sobrante = 0.0
@@ -193,6 +182,9 @@ def cierre_caja():
             "sucursal_id": resumen.get("sucursal_id", sucursal_id),
             "total_general": float(resumen.get("total_general", total_general)),
             "total_real": float(resumen.get("total_real", total_real)),
+            "saldo_efectivo_esperado": saldo_efectivo_esperado,
+            "saldos_finales": productos_serializables["saldos_finales"],
+            "traspasos": productos_serializables["traspasos"],
             "sobrante": float(resumen.get("sobrante", sobrante)),
             "faltante": float(resumen.get("faltante", faltante)),
             "ventas_realizadas": int(resumen.get("ventas_realizadas", totales["ventas_realizadas"])),

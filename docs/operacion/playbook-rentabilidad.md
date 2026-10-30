@@ -9,8 +9,8 @@ Para cálculos operativos, usar los valores que muestra el **Dashboard de admini
 
 ## Alcance de las métricas
 
-- **Flujo Caja del Mes:** parte de $100, divididos en $50 de Yappy y $50 de efectivo, y registra las entradas y salidas reales.
-- **Rentabilidad:** muestra ingresos, gastos, utilidad neta y porcentaje de rentabilidad.
+- **Saldo operativo disponible:** saldo acumulado de Yappy y efectivo desde su apertura, más entradas y menos salidas y traspasos a Fondos. Continúa entre meses; no vuelve a $50/$50. Ver [Traspasos de Tesorería](../TRASPASOS_TESORERIA.md).
+- **Rentabilidad:** muestra ingresos, gastos, utilidad neta y porcentaje de rentabilidad. Excluir los movimientos internos con `categoria='traspaso'`; no son ingresos ni gastos.
 - **Fondos / Tesorería:** los movimientos pagados con Fondos no deben incluirse en flujo de caja mensual ni en rentabilidad. Se revisan por separado en tesorería.
 
 ## Fórmulas
