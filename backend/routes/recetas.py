@@ -11,7 +11,6 @@ def get_all_recetas():
             SELECT r.id, r.producto, r.insumo_id, i.nombre as nombre_insumo, r.cantidad_requerida, i.unidad_medida
             FROM recetas r
             JOIN insumos i ON r.insumo_id = i.id
-            WHERE i.tipo = 'ingrediente'
             ORDER BY r.producto ASC, i.nombre ASC
         """
         recetas = fetch_all(sql)
@@ -36,8 +35,6 @@ def add_ingrediente():
         producto = data["producto"].lower()
         insumo_id = data["insumo_id"]
         cantidad = data["cantidad_requerida"]
-        if not fetch_one("SELECT id FROM insumos WHERE id=:id AND tipo='ingrediente'", {"id": insumo_id}):
-            return jsonify({"error": "Las recetas solo admiten ingredientes; configure los materiales aparte"}), 400
         
         sql = """
             INSERT INTO recetas (producto, insumo_id, cantidad_requerida)
@@ -62,9 +59,6 @@ def add_receta_bulk():
         # Primero eliminamos ingredientes previos si existieran para este producto (opcional, pero util para sobreescribir)
         # execute("DELETE FROM recetas WHERE LOWER(producto) = :prod", {"prod": producto})
         
-        for ing in ingredientes:
-            if not fetch_one("SELECT id FROM insumos WHERE id=:id AND tipo='ingrediente'", {"id": ing["insumo_id"]}):
-                return jsonify({"error": "Las recetas solo admiten ingredientes"}), 400
         for ing in ingredientes:
             sql = """
                 INSERT INTO recetas (producto, insumo_id, cantidad_requerida)
@@ -103,19 +97,3 @@ def update_delete_ingrediente(id):
 @recetas_bp.route("/api/recetas", methods=["OPTIONS"])
 def handle_options_root():
     return "", 200
-
-
-@recetas_bp.route("/api/public/ingredientes", methods=["GET"])
-def ingredientes_publicos():
-    from db import engine
-    from utils.consumos import CatalogoConsumos
-    with engine.connect() as conn:
-        catalogo = CatalogoConsumos(conn)
-        resultado = {}
-        for p in catalogo.productos.values():
-            try:
-                resultado[p["nombre"]] = [{"nombre_insumo": i["nombre_insumo"]}
-                    for i in catalogo.detalle(catalogo.producto(p["id"]), "ingrediente")]
-            except ValueError:
-                resultado[p["nombre"]] = []
-        return jsonify(resultado)
