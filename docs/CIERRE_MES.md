@@ -1,3 +1,12 @@
+> **Actualización: traspasos manuales.** Al activar saldos continuos, el saldo de
+> efectivo/Yappy pasa al mes siguiente y los excedentes solo van a Fondos cuando
+> se confirman en la interfaz. Ver [Traspasos de Tesorería](TRASPASOS_TESORERIA.md).
+> Los ejemplos de este documento que suman $50 por mes o describen excedentes
+> implícitos son históricos y solo aplican a períodos anteriores a la activación.
+> Para períodos posteriores usar los saldos del Libro de Caja y registrar los
+> traspasos desde Tesorería. Excluir `categoria='traspaso'` de ingresos/gastos
+> de rentabilidad; incluirlos al conciliar los saldos de las cuentas.
+
 # 📒 CIERRE DE MES — ANTOJO24
 
 > **Credenciales de la BDD:** buscar el valor `DATABASE_PUBLIC_URL_MAIN` en el archivo `.env` de la raíz del proyecto. No publicar su valor ni contraseñas en este documento.

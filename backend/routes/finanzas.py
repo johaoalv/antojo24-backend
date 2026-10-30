@@ -1,6 +1,10 @@
 from flask import Blueprint, jsonify, request, current_app
 from datetime import datetime, timedelta
-from db import fetch_all
+from db import fetch_all, engine
+from sqlalchemy.exc import OperationalError
+from uuid import UUID
+from utils.tesoreria import (dinero, saldos_operativos, historial_traspasos,
+                             registrar_traspaso, SaldoCambio)
 
 finanzas_bp = Blueprint("finanzas", __name__)
 
@@ -53,26 +57,13 @@ def get_libro_caja():
         if not sucursal_id or sucursal_id == "global":
             return jsonify({"error": "sucursal_id requerido"}), 400
 
-        inicio = f"{fecha}T00:00:00"
-        fin = f"{fecha}T23:59:59"
-        inicio_mes = f"{fecha[:7]}-01T00:00:00"
-
-        # Saldo inicial del día: $50/$50 si es el 1ro del mes,
-        # si no, lo acumulado desde el 1ro hasta antes de este día
-        if inicio == inicio_mes:
-            saldo_inicial_yappy = 50.0
-            saldo_inicial_efectivo = 50.0
-        else:
-            flujo_previo = fetch_all("""
-                SELECT metodo_pago,
-                       SUM(CASE WHEN tipo='entrada' THEN monto ELSE -monto END) as saldo
-                FROM movimientos_caja
-                WHERE sucursal_id = :s AND fecha >= :inicio_mes AND fecha < :inicio_dia
-                GROUP BY metodo_pago
-            """, {"s": sucursal_id, "inicio_mes": inicio_mes, "inicio_dia": inicio})
-            flujo_map = {r["metodo_pago"]: float(r["saldo"] or 0) for r in flujo_previo}
-            saldo_inicial_yappy = 50.0 + flujo_map.get("yappy", 0)
-            saldo_inicial_efectivo = 50.0 + flujo_map.get("efectivo", 0)
+        dia = datetime.strptime(fecha, '%Y-%m-%d')
+        inicio = dia.isoformat()
+        fin = (dia + timedelta(days=1)).isoformat()
+        with engine.connect() as conn:
+            saldos = saldos_operativos(conn, sucursal_id, dia)
+        saldo_inicial_yappy = float(saldos['yappy'])
+        saldo_inicial_efectivo = float(saldos['efectivo'])
 
         sql = """
             SELECT
@@ -85,8 +76,8 @@ def get_libro_caja():
                 metodo_pago,
                 referencia_id
             FROM movimientos_caja
-            WHERE sucursal_id = :s AND fecha >= :inicio AND fecha <= :fin
-            ORDER BY fecha ASC
+            WHERE sucursal_id = :s AND fecha >= :inicio AND fecha < :fin
+            ORDER BY fecha ASC, id ASC
         """
         rows = fetch_all(sql, {"s": sucursal_id, "inicio": inicio, "fin": fin})
 
@@ -97,6 +88,52 @@ def get_libro_caja():
             "movimientos": rows
         }), 200
 
+    except ValueError as e:
+        return jsonify(error=str(e)), 400
     except Exception as e:
         current_app.logger.exception("Error en get_libro_caja: %s", e)
         return jsonify({"error": "Error interno"}), 500
+
+
+@finanzas_bp.route('/api/finanzas/traspasos', methods=['GET'])
+def get_traspasos():
+    sucursal = request.args.get('sucursal_id')
+    with engine.connect() as conn:
+        rows = historial_traspasos(conn, None if sucursal == 'global' else sucursal)
+    return jsonify(rows)
+
+
+@finanzas_bp.route('/api/finanzas/traspasos', methods=['POST'])
+def post_traspaso():
+    try:
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            raise ValueError('Traspaso inválido')
+        sucursal = data.get('sucursal_id')
+        if not isinstance(sucursal, str) or not sucursal.strip() or sucursal == 'global':
+            raise ValueError('Selecciona una sucursal para traspasar')
+        try:
+            identificador = str(UUID(str(data.get('id'))))
+            conservar = {m: dinero(data['conservar'][m]) for m in ('yappy','efectivo')}
+            esperados = {m: dinero(data['saldos_esperados'][m]) for m in ('yappy','efectivo')}
+        except (KeyError, TypeError, AttributeError):
+            raise ValueError('Indica los saldos actuales y los montos a conservar') from None
+        with engine.begin() as conn:
+            creado = registrar_traspaso(conn, identificador, sucursal, conservar, esperados)
+        # La confirmación ya fue guardada; una notificación no debe convertirla en error.
+        from socket_instance import socketio
+        try:
+            socketio.emit('dashboard_update', {'sucursal_id': sucursal})
+        except Exception:
+            current_app.logger.exception('No se pudo notificar el traspaso')
+        return jsonify({'id': identificador, 'message': 'Traspaso registrado', 'creado': creado}), 201 if creado else 200
+    except SaldoCambio as e:
+        return jsonify(error=str(e)), 409
+    except ValueError as e:
+        return jsonify(error=str(e)), 400
+    except OperationalError:
+        current_app.logger.exception('Conflicto al registrar traspaso')
+        return jsonify(error='La caja está ocupada. Reintenta el traspaso.'), 409
+    except Exception:
+        current_app.logger.exception('Error al registrar traspaso')
+        return jsonify(error='No se pudo registrar el traspaso'), 500
